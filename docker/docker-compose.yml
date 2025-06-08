@@ -1,0 +1,54 @@
+# trade_service/docker/docker-compose.yml
+version: "3.8"
+services:
+  trade_service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      STOCKSDEVELOPER_API_KEY: "your_api_key"
+      USER_SERVICE_URL: "http://user-service:8001" # Replace with your user service URL
+      RABBITMQ_HOST: "rabbitmq"
+      RABBITMQ_PORT: 5672
+      MONGODB_URL: "mongodb://mongo:27017/trade_db"
+      TIMESCALEDB_URL: "postgresql://timescale:password@timescale:5432/trade_db"
+      REDIS_URL: "redis://redis:6379/0"
+      TELEGRAM_BOT_TOKEN: "your_telegram_token"
+    depends_on:
+      - rabbitmq
+      - mongo
+      - timescale
+      - redis
+      - user-service # Add dependency on user service
+    restart: always # Restart the service if it crashes
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    restart: always
+  mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    restart: always
+  timescale:
+    image: timescale/timescaledb:latest-pg13
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: "password"
+    restart: always
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    restart: always
+  user-service: # Define a dummy user service (replace with your actual service)
+    image: alpine/httpie # Use a simple image that can respond to HTTP requests
+    ports:
+      - "8001:80"
+    command: sh -c "echo '{\"api_key\": \"dummy_user_service_key\"}' > /data; http -s GET :80/api_key/dummy_org < /data"
+    restart: always

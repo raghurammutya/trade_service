@@ -1,0 +1,37 @@
+# trade_service/kubernetes/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trade-service
+  labels:
+    app: trade-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trade-service
+  template:
+    metadata:
+      labels:
+        app: trade-service
+    spec:
+      containers:
+        - name: trade-service
+          image: trade-service:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: STOCKSDEVELOPER_API_KEY
+              value: "your_api_key"
+            - name: RABBITMQ_HOST
+              value: "rabbitmq"
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: MONGODB_URL
+              value: "mongodb://mongo:27017/trade_db"
+            - name: TIMESCALEDB_URL
+              value: "postgresql://timescale:5432/trade_db"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: TELEGRAM_BOT_TOKEN
+              value: "your_telegram_token"

@@ -1,0 +1,17 @@
+# trade_service/requirements.txt
+fastapi
+uvicorn
+httpx
+pydantic
+sqlalchemy
+psycopg2-binary
+redis
+pika
+shared_architecture
+requests
+python-dotenv
+celery
+pytest
+pytest-asyncio
+pytest-mock
+python-telegram-bot

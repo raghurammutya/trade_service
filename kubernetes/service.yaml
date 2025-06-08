@@ -1,0 +1,12 @@
+# trade_service/kubernetes/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: trade-service
+spec:
+  selector:
+    app: trade-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
