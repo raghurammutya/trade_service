@@ -3,7 +3,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import enum
-from app.core.enums import OrderEvent
+from shared_architecture.enums import OrderEvent
 
 Base = declarative_base()
 

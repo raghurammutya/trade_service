@@ -4,13 +4,17 @@ from app.schemas.trade_schemas import TradeOrder, TradeStatus, AdvancedOrder, Mo
 from app.services.trade_service import TradeService
 from shared_architecture.db import get_db
 from sqlalchemy.orm import Session
-from typing import Optional
-from app.core.enums import Exchange, TradeType, OrderType, ProductType, Variety, Validity
-
+from typing import Optional,List
+from shared_architecture.enums import Exchange, TradeType, OrderType, ProductType, Variety, Validity
+from shared_architecture.schemas.margin_schema import MarginSchema
+from shared_architecture.schemas.position_schema import PositionSchema
+from shared_architecture.schemas.holding_schema import HoldingSchema
+from shared_architecture.schemas.order_schema import OrderSchema
+from shared_architecture.schemas.trade_schemas import TradeOrder, TradeStatus
 router = APIRouter()
 
 @router.post("/execute", response_model=TradeStatus)
-async def execute_trade(trade_order: TradeOrder, organization_id: str, db: Session = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()):
+async def execute_trade(trade_order: TradeOrder, organization_id: str, db: Session = Depends(get_db), background_tasks: BackgroundTasks = Depends(BackgroundTasks)):
     try:
         trade_service = TradeService(db)
         return await trade_service.execute_trade_order(trade_order, organization_id, background_tasks)
@@ -21,7 +25,7 @@ async def execute_trade(trade_order: TradeOrder, organization_id: str, db: Sessi
 async def get_trade_status(order_id: str, organization_id: str, db: Session = Depends(get_db)):
     try:
         trade_service = TradeService(db)
-        return await trade_service.get_trade_status(order_id, organization_id)
+        return await trade_service.get_trade_status(order_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -29,7 +33,7 @@ async def get_trade_status(order_id: str, organization_id: str, db: Session = De
 async def fetch_all_users(organization_id: str, db: Session = Depends(get_db)):
     try:
         trade_service = TradeService(db)
-        return await trade_service.fetch_all_trading_accounts(organization_id)
+        return await trade_service.fetch_all_trading_accounts()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -45,6 +49,7 @@ async def fetch_and_store(pseudo_account: str, organization_id: str, db: Session
 @router.post("/regular_order")
 async def place_regular_order(
     pseudo_account: str,
+    organization_id: str,
     exchange: Exchange,
     symbol: str,
     tradeType: TradeType,
@@ -54,9 +59,8 @@ async def place_regular_order(
     price: float,
     triggerPrice: Optional[float] = 0.0,
     strategy_id: Optional[str] = None,
-    organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -69,7 +73,7 @@ async def place_regular_order(
             productType.value,
             quantity,
             price,
-            triggerPrice,
+            triggerPrice or 0.0,
             strategy_id,
             organization_id,
             background_tasks,
@@ -88,8 +92,9 @@ async def place_cover_order(
     price: float,
     triggerPrice: float,
     organization_id: str,
+    strategy_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -102,7 +107,8 @@ async def place_cover_order(
             quantity,
             price,
             triggerPrice,
-            organization_id,
+            strategy_id,      
+            organization_id, 
             background_tasks,
         )
     except Exception as e:
@@ -111,6 +117,7 @@ async def place_cover_order(
 @router.post("/bracket_order")
 async def place_bracket_order(
     pseudo_account: str,
+    organization_id: str,
     exchange: Exchange,
     symbol: str,
     tradeType: TradeType,
@@ -121,9 +128,9 @@ async def place_bracket_order(
     target: float,
     stoploss: float,
     trailingStoploss: Optional[float] = 0.0,
-    organization_id: str,
+    strategy_id: Optional[str] = None, 
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -138,8 +145,9 @@ async def place_bracket_order(
             triggerPrice,
             target,
             stoploss,
-            trailingStoploss,
-            organization_id,
+            trailingStoploss or 0.0,  # Handle None value
+            strategy_id,              # Add missing strategy_id
+            organization_id,          # Now in correct position
             background_tasks,
         )
     except Exception as e:
@@ -150,33 +158,33 @@ async def place_advanced_order(
     order: AdvancedOrder,
     organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
         return await trade_service.place_advanced_order(
-            order.variety.value,
-            order.pseudo_account,
-            order.exchange.value,
-            order.symbol,
-            order.tradeType.value,
-            order.orderType.value,
-            order.productType.value,
-            order.quantity,
-            order.price,
-            order.triggerPrice,
-            order.target,
-            order.stoploss,
-            order.trailingStoploss,
-            order.disclosedQuantity,
-            order.validity.value,
-            order.amo,
-            order.strategyId,
-            order.comments,
-            order.publisherId,
-            organization_id,
-            background_tasks,
-        )
+        order.variety.value,
+        order.pseudo_account,
+        order.exchange.value,
+        order.symbol,
+        order.tradeType.value,
+        order.orderType.value,
+        order.productType.value,
+        order.quantity,
+        order.price,
+        order.triggerPrice or 0.0,          # ✅ Handle None
+        order.target or 0.0,                # ✅ Handle None
+        order.stoploss or 0.0,              # ✅ Handle None
+        order.trailingStoploss or 0.0,      # ✅ Handle None
+        order.disclosedQuantity or 0,       # ✅ Handle None
+        order.validity.value,
+        order.amo or False,                 # ✅ Handle None
+        order.strategyId or "N/A",          # ✅ Handle None
+        order.comments or "",               # ✅ Handle None
+        order.publisherId or "",            # ✅ Handle None
+        organization_id,
+        background_tasks,
+    )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -186,7 +194,7 @@ async def cancel_order(
     platform_id: str,
     organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -202,7 +210,7 @@ async def cancel_child_orders(
     platform_id: str,
     organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -218,7 +226,7 @@ async def modify_order(
     order: ModifyOrder,
     organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -244,7 +252,7 @@ async def square_off_position(
     symbol: str,
     organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -266,7 +274,7 @@ async def square_off_portfolio(
     position_category: str,
     organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)
@@ -281,7 +289,7 @@ async def cancel_all_orders(
     pseudo_account: str,
     organization_id: str,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
 ):
     try:
         trade_service = TradeService(db)

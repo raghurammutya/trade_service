@@ -1,0 +1,8 @@
+AutoTrader-Web-API-Stocks-Developer
+# HTTP client
+httpx>=0.24.0
+
+# Task queue
+celery>=5.3.0
+
+pickle

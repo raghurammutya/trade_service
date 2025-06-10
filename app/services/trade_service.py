@@ -1,411 +1,293 @@
-# trade_service/app/services/trade_service.py
-import httpx
 import json
-from shared_architecture.utils.service_helpers import connection_manager
-from shared_architecture.models.broker import Broker
-from sqlalchemy.orm import Session
-from app.core.config import settings
-from com.dakshata.autotrader.api.AutoTrader import AutoTrader, PlatformHolding
-import requests
-from datetime import datetime
-from app.models.margin_model import MarginModel
-from app.models.position_model import PositionModel
-from app.models.holding_model import HoldingModel
-from app.models.order_model import OrderModel, OrderTransitionType
-from app.models.order_event_model import OrderEventModel
-from app.utils.rate_limiter import RateLimiter
+from typing import Optional,List
+
+import httpx
 from fastapi import HTTPException, BackgroundTasks
-from app.schemas.margin_schema import MarginSchema
-from app.schemas.position_schema import PositionSchema
-from app.schemas.holding_schema import HoldingSchema
-from app.schemas.order_schema import OrderSchema
+from sqlalchemy.orm import Session
+from datetime import datetime
 import pickle
-from app.core.celery_config import celery_app
-from app.core.enums import OrderEvent
+import requests
 
-# Define the Celery task
-@celery_app.task(bind=True, max_retries=3)
-def process_order_task(self, order_dict: dict, organization_id: str):
-    """
-    Celery task to asynchronously process an order.
-    """
-    db = connection_manager.get_timescaledb_session()
-    try:
-        order = OrderModel(**order_dict)  # Recreate OrderModel from dict
-        api_key = celery_app.control.apply(get_api_key_task.name, (organization_id,))
-        stocksdeveloper_conn = AutoTrader.create_instance(api_key, AutoTrader.SERVER_URL)
+from shared_architecture.connections.connection_manager import connection_manager
+from shared_architecture.db.models.broker import Broker
+from shared_architecture.db.models.order_model import OrderModel
+from shared_architecture.db.models.margin_model import MarginModel
+from shared_architecture.db.models.position_model import PositionModel
+from shared_architecture.db.models.holding_model import HoldingModel
+from shared_architecture.schemas.margin_schema import MarginSchema
+from shared_architecture.schemas.position_schema import PositionSchema
+from shared_architecture.schemas.holding_schema import HoldingSchema
+from shared_architecture.schemas.order_schema import OrderSchema
+from shared_architecture.schemas.trade_schemas import TradeOrder
 
-        if settings.mock_order_execution:
-            # Mock order execution for development/testing
-            order_status = {
-                "status": "COMPLETE",
-                "average_price": order.price,
-                "filled_quantity": order.quantity,
-                "order_id": str(order.id),  # Use local order ID
-                "exchange_order_id": "MOCK_" + str(order.id),
-            }
-        else:
-            # Real order execution
-            if order.variety == "REGULAR":
-                response = stocksdeveloper_conn.place_regular_order(
-                    pseudo_account=order.pseudo_account,
-                    exchange=order.exchange,
-                    symbol=order.symbol,
-                    tradeType=order.trade_type,
-                    orderType=order.order_type,
-                    productType=order.product_type,
-                    quantity=order.quantity,
-                    price=order.price,
-                    triggerPrice=order.trigger_price
-                )
-            elif order.variety == "CO":
-                response = stocksdeveloper_conn.place_cover_order(
-                    pseudo_account=order.pseudo_account,
-                    exchange=order.exchange,
-                    symbol=order.symbol,
-                    tradeType=order.trade_type,
-                    orderType=order.order_type,
-                    quantity=order.quantity,
-                    price=order.price,
-                    triggerPrice=order.trigger_price
-                )
-            elif order.variety == "BO":
-                response = stocksdeveloper_conn.place_bracket_order(
-                    pseudo_account=order.pseudo_account,
-                    exchange=order.exchange,
-                    symbol=order.symbol,
-                    tradeType=order.trade_type,
-                    orderType=order.order_type,
-                    quantity=order.quantity,
-                    price=order.price,
-                    triggerPrice=order.trigger_price,
-                    target=order.target,
-                    stoploss=order.stoploss,
-                    trailingStoploss=order.trailingStoploss
-                )
-            elif order.variety == "AMO":
-                response = stocksdeveloper_conn.place_advanced_order(
-                    variety=order.variety,
-                    pseudo_account=order.pseudo_account,
-                    exchange=order.exchange,
-                    symbol=order.symbol,
-                    tradeType=order.trade_type,
-                    orderType=order.order_type,
-                    productType=order.product_type,
-                    quantity=order.quantity,
-                    price=order.price,
-                    triggerPrice=order.trigger_price,
-                    target=order.target,
-                    stoploss=order.stoploss,
-                    trailingStoploss=order.trailingStoploss,
-                    disclosedQuantity=order.disclosed_quantity,
-                    validity=order.validity,
-                    amo=order.amo,
-                    strategyId=order.strategy_id,
-                    comments=order.comments,
-                    publisherId=order.publisher_id
-                )
-            elif order.variety == "CANCEL":
-                response = stocksdeveloper_conn.cancel_order_by_platform_id(
-                    pseudo_account=order.pseudo_account,
-                    platform_id=order.platform
-                )
-            elif order.variety == "CANCEL_CHILD":
-                response = stocksdeveloper_conn.cancel_child_orders_by_platform_id(
-                    pseudo_account=order.pseudo_account,
-                    platform_id=order.platform
-                )
-            elif order.variety == "MODIFY":
-                response = stocksdeveloper_conn.modify_order_by_platform_id(
-                    pseudo_account=order.pseudo_account,
-                    platform_id=order.platform,
-                    order_type=order.order_type,
-                    quantity=order.quantity,
-                    price=order.price,
-                    trigger_price=order.trigger_price
-                )
-            elif order.variety == "SQUARE_OFF_POSITION":
-                response = stocksdeveloper_conn.square_off_position(
-                    pseudo_account=order.pseudo_account,
-                    position_category=order.position_category,
-                    position_type=order.position_type,
-                    exchange=order.exchange,
-                    symbol=order.symbol
-                )
-            elif order.variety == "SQUARE_OFF_PORTFOLIO":
-                response = stocksdeveloper_conn.square_off_portfolio(
-                    pseudo_account=order.pseudo_account,
-                    position_category=order.position_category
-                )
-            elif order.variety == "CANCEL_ALL_ORDERS":
-                response = stocksdeveloper_conn.cancel_all_orders(
-                    pseudo_account=order.pseudo_account
-                )
-            else:
-                raise ValueError(f"Invalid order variety: {order.variety}")
-
-            if response.success():
-                order_status = response.result
-            else:
-                raise Exception(response.message)
-
-            celery_app.control.apply(update_order_status_task.name, (order.id, order_status))
-
-        except Exception as exc:
-            print(f"Task {self.request.id} failed: {exc}")
-            order.status = "REJECTED"  # Or another appropriate status
-            order.status_message = str(exc)  # Store the error message
-            celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_REJECTED.value, str(exc)))
-            db.rollback()
-            raise self.retry(exc=exc, countdown=2 ** self.request.retries)
-        finally:
-            db.close()
-
-@celery_app.task
-def update_order_status_task(order_id: int, order_status: dict):
-    """
-    Celery task to update the order status in the database.
-    """
-    db = connection_manager.get_timescaledb_session()
-    try:
-        order = db.query(OrderModel).get(order_id)
-        if order:
-            old_status = order.status
-            order.status = order_status["status"]
-            order.average_price = order_status.get("average_price")
-            order.filled_quantity = order_status.get("filled_quantity")
-            order.status_message = order_status.get("status_message")
-            order.exchange_order_id = order_status.get("exchange_order_id")
-            db.commit()
-
-            # Create Order Events
-            if order.status != old_status:
-                if order.status == "COMPLETE":
-                    celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_FILLED.value))
-                elif order.status == "PARTIALLY_FILLED":
-                    celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_PARTIALLY_FILLED.value))
-                elif order.status == "CANCELLED":
-                    celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_CANCELLED.value))
-                elif order.status == "REJECTED":
-                    celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_REJECTED.value, order.status_message))
-                elif order.status == "MODIFIED":
-                    celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_MODIFIED.value))
-                elif order.status == "ACCEPTED":
-                    celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_ACCEPTED.value))
-                else:
-                    celery_app.control.apply(create_order_event_task.name, (order.id, OrderEvent.ORDER_PLACED.value))
-
-            if order.status in ["COMPLETE", "PARTIALLY_FILLED"]:
-                celery_app.control.apply(update_positions_and_holdings_task.name, (order,))
-        else:
-            print(f"Order with ID {order_id} not found in the database.")
-    except Exception as e:
-        print(f"Error updating order status: {e}")
-        db.rollback()
-    finally:
-        db.close()
-
-@celery_app.task
-def create_order_event_task(order_id: int, event_type: str, details: str = None):
-    """
-    Celery task to create an order event.
-    """
-    db = connection_manager.get_timescaledb_session()
-    try:
-        order = db.query(OrderModel).get(order_id)
-        if order:
-            event = OrderEventModel(order_id=order.id, event_type=event_type, details=details)
-            db.add(event)
-            db.commit()
-        else:
-            print(f"Order with ID {order_id} not found in the database.")
-    except Exception as e:
-        print(f"Error creating order event: {e}")
-        db.rollback()
-    finally:
-        db.close()
-
-@celery_app.task
-def update_positions_and_holdings_task(order: OrderModel):
-    """
-    Celery task to update positions and holdings.
-    """
-    db = connection_manager.get_timescaledb_session()
-    try:
-        trade_service = TradeService(db)
-        trade_service._update_positions_and_holdings(order)
-        db.commit()
-    except Exception as e:
-        print(f"Error updating positions and holdings: {e}")
-        db.rollback()
-    finally:
-        db.close()
-
-@celery_app.task
-def get_api_key_task(organization_id: str):
-    """
-    Celery task to retrieve the API key for a given organization, with caching.
-    """
-    redis_conn = connection_manager.get_redis_connection()
-    cached_key = redis_conn.get(f"api_key:{organization_id}")
-    if cached_key:
-        return cached_key.decode("utf-8")
-
-    # Call user service to get the API key
-    user_service_url = settings.user_service_url
-    try:
-        response = requests.get(f"{user_service_url}/api_key/{organization_id}")
-        response.raise_for_status()
-        api_key = response.json()["api_key"]
-        redis_conn.set(f"api_key:{organization_id}", api_key.encode("utf-8"), ex=3600)
-        return api_key
-    except Exception as e:
-        print(f"Error getting API key: {e}")
-        raise e
-    finally:
-        redis_conn.close()
-
+from app.core.config import settings
+from app.utils.rate_limiter import RateLimiter
+from app.tasks.update_order_status import update_order_status_task as celery_update_order_status_task
+from app.tasks.update_positions_and_holdings_task import update_positions_and_holdings_task
+from app.tasks.create_order_event import create_order_event_task
+from app.tasks.process_order_task import process_order_task
+from shared_architecture.enums import OrderEvent,OrderTransitionType
+from typing import cast
+# Add AutoTrader import - adjust based on your actual package
+try:
+    from com.dakshata.autotrader.api import AutoTrader
+except ImportError:
+    # Mock AutoTrader if not available
+    class AutoTraderResponse:
+        def __init__(self, success=False, result=None, message="Mock response"):
+            self._success = success
+            self.result = result or []
+            self.message = message
+        
+        def success(self):
+            return self._success
+    
+    class AutoTrader:
+        @staticmethod
+        def create_instance(api_key, server_url):
+            return AutoTraderMock()
+        SERVER_URL = "mock_url"
+    
+    class AutoTraderMock:
+        def read_platform_margins(self, pseudo_account=None):
+            return AutoTraderResponse(success=False, result=[], message="Mock: AutoTrader not available")
+        
+        def read_platform_positions(self, pseudo_account=None):
+            return AutoTraderResponse(success=False, result=[], message="Mock: AutoTrader not available")
+        
+        def read_platform_holdings(self, pseudo_account=None):
+            return AutoTraderResponse(success=False, result=[], message="Mock: AutoTrader not available")
+        
+        def read_platform_orders(self, pseudo_account=None):
+            return AutoTraderResponse(success=False, result=[], message="Mock: AutoTrader not available")
 class TradeService:
     def __init__(self, db: Session):
         self.db = db
-        self.rabbitmq_conn = connection_manager.get_rabbitmq_connection()
-        self.timescaledb_conn = connection_manager.get_timescaledb_session()
-        self.redis_conn = connection_manager.get_redis_connection()
-        self.rate_limiter = RateLimiter(self.redis_conn)
+        self.account: Optional[str] = None
+        self.token: Optional[str] = None
+        self.timescaledb_conn = connection_manager.get_sync_timescaledb_session() # Or self.db directly if preferred
+        # Fix Redis connection type issue
+        self.redis_conn = connection_manager.get_redis_connection()  # type: ignore
+        self.rabbitmq_conn = connection_manager.get_rabbitmq_connection() # For any direct synchronous publishes
+        self.rate_limiter = RateLimiter(self.redis_conn)  # type: ignore   
+        self.stocksdeveloper_conn=None
+    def set_credentials(self, account: str, token: str):
+        self.account = account
+        self.token = token
 
-    async def execute_trade_order(
-        self,
-        trade_order: TradeOrder,
-        organization_id: str,
-        background_tasks: BackgroundTasks = None,
-    ):
-        if not self.rate_limiter.user_rate_limit(trade_order.user_id, organization_id) or not self.rate_limiter.account_rate_limit(trade_order.user_id, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
+    def _call_api(self, endpoint: str, payload: dict, method: str = "POST") -> dict:
+        url = f"{settings.trade_api_url}/{endpoint}"
+        headers = {"Authorization": f"Bearer {self.token}"}
 
-        instrument_key = f"{trade_order.symbol}@@@"  # Construct instrument_key (adjust as needed)
-        # Create a dummy OrderModel for asynchronous processing
-        order_entry = OrderModel(
-            pseudo_account=trade_order.user_id,
-            symbol=trade_order.symbol,
-            quantity=trade_order.quantity,
-            price=trade_order.price,
-            trade_type=trade_order.side,
-            variety="REGULAR",
-            instrument_key=instrument_key
-        )
-        self.db.add(order_entry)
-        self.db.commit()
+        response = httpx.request(method, url, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
 
-        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
+    def place_order(self, order: OrderModel):
+        payload = {
+            "account": self.account,
+            "symbol": order.symbol,
+            "quantity": order.quantity,
+            "order_type": order.order_type,
+            "price": order.price,
+            "side": order.side,
+        }
+        result = self._call_api("orders/place", payload)
+        # Cast to int to help Pylance recognize it's not Column[int]
+        self._handle_response(cast(int, order.id), result)
 
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
+    def modify_order(self, order: OrderModel):
+        payload = {
+            "account": self.account,
+            "order_id": order.exchange_order_id,
+            "quantity": order.quantity,
+            "price": order.price,
+        }
+        result = self._call_api("orders/modify", payload)
+        # Cast to int to help Pylance recognize it's not Column[int]
+        self._handle_response(cast(int, order.id), result)
 
-        return {"message": "Order processing started"}
+    def cancel_order(self, order: OrderModel):
+        payload = {
+            "account": self.account,
+            "order_id": order.exchange_order_id,
+        }
+        result = self._call_api("orders/cancel", payload)
+        # Cast to int to help Pylance recognize it's not Column[int]
+        self._handle_response(cast(int, order.id), result)
 
-    async def get_trade_status(self, order_id: str, organization_id: str):
-        if not self.rate_limiter.user_rate_limit(order_id, organization_id) or not self.rate_limiter.account_rate_limit(order_id, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
+    def _handle_response(self, order_id: int, response: dict):
+        """
+        Handle the API response by delegating to the Celery update task.
+        """
+        celery_update_order_status_task.apply_async(args=[order_id, response]) # type: ignore
 
-        # StocksDeveloper API call to get order status
-        cached_status = self.redis_conn.get(f"name:{pseudo_account}:order_status:{order_id}")
-        if cached_status:
-            return pickle.loads(cached_status)
+    def sync_order_status(self, order: OrderModel):
+        payload = {
+            "account": self.account,
+            "order_id": order.exchange_order_id,
+        }
+        result = self._call_api("orders/status", payload)
 
-        api_key = await self._get_api_key(organization_id)
-        stocksdeveloper_conn = AutoTrader.create_instance(api_key, AutoTrader.SERVER_URL)
-        order_status = stocksdeveloper_conn.get_order_status(order_id=order_id)
-
-        self.redis_conn.set(f"name:{pseudo_account}:order_status:{order_id}", pickle.dumps(order_status), ex=300)
-
-        return order_status
+        # Cast to int to help Pylance recognize it's not Column[int]
+        self._handle_response(cast(int, order.id), result)
 
     async def fetch_and_store_data(self, pseudo_acc: str, organization_id: str):
+        """Fetches and stores various datasets (margins, positions, holdings, orders) for a user."""
         if not self.rate_limiter.account_rate_limit(pseudo_acc, organization_id):
             raise HTTPException(status_code=429, detail="Too Many Requests")
 
-        api_key = await self._get_api_key(organization_id)
+        api_key = await self.get_api_key(organization_id)
         stocksdeveloper_conn = AutoTrader.create_instance(api_key, AutoTrader.SERVER_URL)
 
+        # Check if stocksdeveloper_conn is None (mock case)
+        if stocksdeveloper_conn is None:
+            print(f"AutoTrader connection failed for organization {organization_id}")
+            return
+
         # Fetch and store margins
-        margins = stocksdeveloper_conn.read_platform_margins(pseudo_account=pseudo_acc)
-        for margin in margins:
-            instrument_key = f"{margin.get('exchange', '')}@{margin.get('symbol', '')}@@@"  # Construct instrument_key
-            margin_entry = MarginModel(**margin, pseudo_account=pseudo_acc, margin_date=datetime.utcnow(), instrument_key=instrument_key)
-            self.db.add(margin_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:margin:{margin['category']}", pickle.dumps(MarginSchema.from_orm(margin_entry)), ex=300)
+        # Fetch and store margins
+        margins_response = stocksdeveloper_conn.read_platform_margins(pseudo_account=pseudo_acc)  # type: ignore
+        if margins_response.success():
+            # Ensure result is iterable
+            margin_results = margins_response.result
+            if margin_results and hasattr(margin_results, '__iter__'):
+                for margin in margin_results:
+                    # Construct instrument_key (if available/applicable for margins)
+                    # This might need adjustment based on actual margin data structure
+                    instrument_key = f"{margin.get('exchange', '')}@{margin.get('symbol', '')}@{margin.get('productType', '')}@{margin.get('expiry_date', '')}@{margin.get('option_type', '')}@{margin.get('strike_price', '')}"
+                    margin_entry = MarginModel(**margin, pseudo_account=pseudo_acc, margin_date=datetime.utcnow(), instrument_key=instrument_key)
+                    self.db.add(margin_entry)
+                    margin_data = pickle.dumps(MarginSchema.from_orm(margin_entry))
+                    await self.redis_conn.set(f"org:{organization_id}:margin:{pseudo_acc}:{margin['category']}", margin_data, ex=300)
+            else:
+                print(f"Margins result is not iterable for {pseudo_acc}: {margin_results}")
+        else:
+            print(f"Failed to fetch margins for {pseudo_acc}: {margins_response.message}")
 
         # Fetch and store positions
-        positions = stocksdeveloper_conn.read_platform_positions(pseudo_account=pseudo_acc)
-        for position in positions:
-            instrument_key = f"{position.get('exchange', '')}@{position.get('symbol', '')}@@@"  # Construct instrument_key
-            position_entry = PositionModel(**position, pseudo_account=pseudo_acc, instrument_key=instrument_key)
-            self.db.add(position_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:position:{position['symbol']}", pickle.dumps(PositionSchema.from_orm(position_entry)), ex=300)
+        positions_response = stocksdeveloper_conn.read_platform_positions(pseudo_account=pseudo_acc)  # type: ignore
+        if positions_response.success():
+            # Ensure result is iterable
+            position_results = positions_response.result
+            if position_results and hasattr(position_results, '__iter__'):
+                for position in position_results:
+                    # Construct instrument_key from position data
+                    instrument_key = f"{position.get('exchange', '')}@{position.get('symbol', '')}@{position.get('type', '')}@{position.get('expiry', '')}@{position.get('option_type', '')}@{position.get('strike_price', '')}"
+                    position_entry = PositionModel(**position, pseudo_account=pseudo_acc, instrument_key=instrument_key)
+                    self.db.add(position_entry)
+                    position_data = pickle.dumps(PositionSchema.from_orm(position_entry))
+                    await self.redis_conn.set(f"org:{organization_id}:position:{pseudo_acc}:{position['symbol']}", position_data, ex=300)
+            else:
+                print(f"Positions result is not iterable for {pseudo_acc}: {position_results}")
+        else:
+            print(f"Failed to fetch positions for {pseudo_acc}: {positions_response.message}")
+
 
         # Fetch and store holdings
-        holdings = stocksdeveloper_conn.read_platform_holdings(pseudo_account=pseudo_acc)
-        for holding in holdings:
-            instrument_key = f"{holding.get('exchange', '')}@{holding.get('symbol', '')}@@@"  # Construct instrument_key
-            holding_entry = HoldingModel(**holding, pseudo_account=pseudo_acc, instrument_key=instrument_key)
-            self.db.add(holding_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:holding:{holding['symbol']}", pickle.dumps(HoldingSchema.from_orm(holding_entry)), ex=300)
+        holdings_response = stocksdeveloper_conn.read_platform_holdings(pseudo_account=pseudo_acc)  # type: ignore
+        if holdings_response.success():
+            # Ensure result is iterable
+            holding_results = holdings_response.result
+            if holding_results and hasattr(holding_results, '__iter__'):
+                for holding in holding_results:
+                    # Construct instrument_key from holding data
+                    instrument_key = f"{holding.get('exchange', '')}@{holding.get('symbol', '')}@{holding.get('product', '')}@{holding.get('expiry', '')}@{holding.get('option_type', '')}@{holding.get('strike_price', '')}"
+                    holding_entry = HoldingModel(**holding, pseudo_account=pseudo_acc, instrument_key=instrument_key)
+                    self.db.add(holding_entry)
+                    holding_data = pickle.dumps(HoldingSchema.from_orm(holding_entry))
+                    await self.redis_conn.set(f"org:{organization_id}:holding:{pseudo_acc}:{holding['symbol']}", holding_data, ex=300)
+            else:
+                print(f"Holdings result is not iterable for {pseudo_acc}: {holding_results}")
+        else:
+            print(f"Failed to fetch holdings for {pseudo_acc}: {holdings_response.message}")
 
         # Fetch and store orders
-        orders = stocksdeveloper_conn.read_platform_orders(pseudo_account=pseudo_acc)
-        for order in orders:
-            instrument_key = f"{order.get('exchange', '')}@{order.get('symbol', '')}@@@"  # Construct instrument_key
-            order_entry = OrderModel(**order, pseudo_account=pseudo_acc, instrument_key=instrument_key)
-            self.db.add(order_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:order:{order['id']}", pickle.dumps(OrderSchema.from_orm(order_entry)), ex=300)
+        orders_response = stocksdeveloper_conn.read_platform_orders(pseudo_account=pseudo_acc)  # type: ignore
+        if orders_response.success():
+            # Ensure result is iterable
+            order_results = orders_response.result
+            if order_results and hasattr(order_results, '__iter__'):
+                for order_data in order_results:
+                    # Construct instrument_key from order data
+                    instrument_key = f"{order_data.get('exchange', '')}@{order_data.get('symbol', '')}@{order_data.get('productType', '')}@{order_data.get('expiry', '')}@{order_data.get('option_type', '')}@{order_data.get('strike_price', '')}"
+                    # Ensure datetime objects are handled correctly from API response (string to datetime)
+                    if 'exchange_time' in order_data and isinstance(order_data['exchange_time'], str):
+                        try:
+                            order_data['exchange_time'] = datetime.fromisoformat(order_data['exchange_time'].replace('Z', '+00:00')) # Handle ISO format
+                        except ValueError:
+                            pass # Handle if format is different
+                    if 'platform_time' in order_data and isinstance(order_data['platform_time'], str):
+                        try:
+                            order_data['platform_time'] = datetime.fromisoformat(order_data['platform_time'].replace('Z', '+00:00'))
+                        except ValueError:
+                            pass
+                    if 'modified_time' in order_data and isinstance(order_data['modified_time'], str):
+                        try:
+                            order_data['modified_time'] = datetime.fromisoformat(order_data['modified_time'].replace('Z', '+00:00'))
+                        except ValueError:
+                            pass
+
+                    # Assuming order_data dict keys match OrderModel columns
+                    order_entry = OrderModel(**order_data, pseudo_account=pseudo_acc, instrument_key=instrument_key)
+                    self.db.add(order_entry)
+                    order_data_pickled = pickle.dumps(OrderSchema.from_orm(order_entry))
+                    await self.redis_conn.set(f"org:{organization_id}:order:{pseudo_acc}:{order_data['id']}", order_data_pickled, ex=300)
+            else:
+                print(f"Orders result is not iterable for {pseudo_acc}: {order_results}")
+        else:
+            print(f"Failed to fetch orders for {pseudo_acc}: {orders_response.message}")
 
         self.db.commit()
 
-    async def fetch_all_trading_accounts(self, organization_id: str):
-        if not self.rate_limiter.account_rate_limit("fetchAllTradingAccounts", organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
+    async def _create_order_event(self, order: OrderModel, event_type: OrderEvent, details: Optional[str] = None):
+        """
+        Triggers a Celery task to create and store an OrderEvent.
+        """
+        # Use send_task instead of apply_async for consistency
+        from app.core.celery_config import celery_app
+        celery_app.send_task('create_order_event_task', args=[order.id, event_type.value, details])
 
-        api_key = await self._get_api_key(organization_id)
-        headers = {"api-key": api_key}
-        url = "https://apix.stocksdeveloper.in/account/fetchAllTradingAccounts"
-        try:
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            trading_accounts_data = response.json()
-            return trading_accounts_data
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+
+    async def _get_organization_name_for_user(self, user_id: str) -> str:
+        """
+        Retrieves the organization name for a user from Redis cache.
+        """
+        organization_name = await self.redis_conn.get(f"user:{user_id}:organization")
+        if organization_name:
+            return organization_name.decode("utf-8")
+        else:
+            raise ValueError(f"Organization name not found for user: {user_id}")
 
     async def _check_for_conflicting_orders(self, pseudo_account: str, instrument_key: str, trade_type: str, strategy_id: str):
         """
-        Checks for conflicting orders/positions/holdings on the same instrument.
+        Checks for conflicting orders/positions/holdings on the same instrument by other strategies.
+        Raises HTTPException (409 Conflict) if a conflict is detected.
         """
         existing_positions = self.db.query(PositionModel).filter_by(pseudo_account=pseudo_account, instrument_key=instrument_key).all()
         existing_orders = self.db.query(OrderModel).filter_by(pseudo_account=pseudo_account, instrument_key=instrument_key).filter(OrderModel.status.in_(['PENDING', 'PARTIALLY_FILLED'])).all()
         existing_holdings = self.db.query(HoldingModel).filter_by(pseudo_account=pseudo_account, instrument_key=instrument_key).all()
 
         for position in existing_positions:
-            if position.strategy_id != strategy_id:
-                if trade_type == "BUY" and position.direction == "SELL":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL position exists from another strategy ({position.strategy_id})")
-                elif trade_type == "SELL" and position.direction == "BUY":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY position exists from another strategy ({position.strategy_id})")
+            if position.strategy_id != strategy_id:  # type: ignore
+                if trade_type == "BUY" and position.direction == "SELL":  # type: ignore
+                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL position exists from another strategy ({position.strategy_id}) on {instrument_key}")  # type: ignore
+                elif trade_type == "SELL" and position.direction == "BUY":  # type: ignore
+                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY position exists from another strategy ({position.strategy_id}) on {instrument_key}")  # type: ignore
 
-        for order in existing_orders:
-            if order.strategy_id != strategy_id:
-                if trade_type == "BUY" and order.trade_type == "SELL":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL order exists from another strategy ({order.strategy_id})")
-                elif trade_type == "SELL" and order.trade_type == "BUY":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY order exists from another strategy ({order.strategy_id})")
+        for order_in_db in existing_orders:
+            if order_in_db.strategy_id != strategy_id:  # type: ignore
+                if trade_type == "BUY" and order_in_db.trade_type == "SELL":  # type: ignore
+                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL order exists from another strategy ({order_in_db.strategy_id}) on {instrument_key}")  # type: ignore
+                elif trade_type == "SELL" and order_in_db.trade_type == "BUY":  # type: ignore
+                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY order exists from another strategy ({order_in_db.strategy_id}) on {instrument_key}")  # type: ignore
 
         for holding in existing_holdings:
-            if holding.strategy_id != strategy_id:
-                if trade_type == "BUY" and holding.quantity < 0:
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL holding exists from another strategy ({holding.strategy_id})")
-                elif trade_type == "SELL" and holding.quantity > 0:
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY holding exists from another strategy ({holding.strategy_id})")
+            if holding.strategy_id != strategy_id:  # type: ignore
+                if trade_type == "BUY" and holding.quantity < 0:  # type: ignore
+                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL holding exists from another strategy ({holding.strategy_id}) on {instrument_key}")  # type: ignore
+                elif trade_type == "SELL" and holding.quantity > 0:  # type: ignore
+                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY holding exists from another strategy ({holding.strategy_id}) on {instrument_key}")  # type: ignore
 
     async def _handle_holding_to_position_transition(
         self,
@@ -415,7 +297,8 @@ class TradeService:
         strategy_id: str,
     ):
         """
-        Handles the transition of holdings to positions when a sell order is placed.
+        Handles the intraday transition of holdings to positions when a sell order is placed.
+        Reduces holding quantity and creates a temporary position for the sell.
         """
         existing_holding = self.db.query(HoldingModel).filter_by(
             pseudo_account=pseudo_account,
@@ -426,16 +309,18 @@ class TradeService:
         if not existing_holding:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient holdings for {instrument_key} for strategy {strategy_id}",
+                detail=f"Insufficient holdings for {instrument_key} for strategy {strategy_id}. No matching holding found."
             )
 
-        if existing_holding.quantity < quantity:
+        if existing_holding.quantity < quantity:  # type: ignore
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient holdings for {instrument_key} for strategy {strategy_id}",
+                detail=f"Insufficient holdings for {instrument_key} for strategy {strategy_id}. Available: {existing_holding.quantity}, Requested: {quantity}."
             )
 
-        existing_holding.quantity -= quantity
+        existing_holding.quantity -= quantity  # type: ignore
+        self.db.add(existing_holding)
+
         new_position = PositionModel(
             pseudo_account=pseudo_account,
             instrument_key=instrument_key,
@@ -443,31 +328,37 @@ class TradeService:
             source_strategy_id=strategy_id,
             net_quantity=-quantity,
             sell_quantity=quantity,
-            direction="SELL"
+            direction="SELL",
+            timestamp=datetime.utcnow(),
+            account_id=pseudo_account,
+            exchange=instrument_key.split('@')[0],
+            symbol=instrument_key.split('@')[1],
+            atPnl=0.0, mtm=0.0, multiplier=1, net_value=0.0, overnight_quantity=0,
+            platform='StocksDeveloper', pnl=0.0, realised_pnl=0.0, type='INTRADAY', unrealised_pnl=0.0,
+            state='OPEN'
         )
         self.db.add(new_position)
         self.db.commit()
 
     async def _update_positions_and_holdings(self, order: OrderModel):
         """
-        Updates positions and holdings based on order execution.
-        This is the most complex logic.
+        Updates positions and holdings based on order execution status (COMPLETE/PARTIALLY_FILLED).
+        This function is designed to be called by a Celery task, so it receives a detached SQLAlchemy object.
         """
+        if order.status not in ["COMPLETE", "PARTIALLY_FILLED"]:  # type: ignore
+            print(f"Order {order.id} status is {order.status}. Skipping position/holding update.")
+            return
 
-        if order.status not in ["COMPLETE", "PARTIALLY_FILLED"]:
-            return  # Only update on completed/partially filled orders
-
-        quantity_filled = order.filled_quantity if order.filled_quantity else order.quantity
-
-        if quantity_filled == 0:
+        quantity_impact = order.filled_quantity if order.filled_quantity is not None else order.quantity  # type: ignore
+        if quantity_impact == 0:  # type: ignore
             return
 
         instrument_key = order.instrument_key
         pseudo_account = order.pseudo_account
         strategy_id = order.strategy_id
         trade_type = order.trade_type
+        signed_quantity_impact = quantity_impact if trade_type == "BUY" else -quantity_impact  # type: ignore
 
-        # 1. Update/Create Position
         existing_position = self.db.query(PositionModel).filter_by(
             pseudo_account=pseudo_account,
             instrument_key=instrument_key,
@@ -475,188 +366,173 @@ class TradeService:
         ).first()
 
         if existing_position:
-            if trade_type == "BUY":
-                existing_position.net_quantity += quantity_filled
-                existing_position.buy_quantity += quantity_filled
-                existing_position.buy_value += order.price * quantity_filled
-                existing_position.buy_avg_price = existing_position.buy_value / existing_position.buy_quantity if existing_position.buy_quantity else 0
-                existing_position.direction = "BUY"
-            elif trade_type == "SELL":
-                existing_position.net_quantity -= quantity_filled
-                existing_position.sell_quantity += quantity_filled
-                existing_position.sell_value += order.price * quantity_filled
-                existing_position.sell_avg_price = existing_position.sell_value / existing_position.sell_quantity if existing_position.sell_quantity else 0
-                existing_position.direction = "SELL"
+            existing_position.net_quantity += signed_quantity_impact  # type: ignore
+            if trade_type == "BUY":  # type: ignore
+                existing_position.buy_quantity = (existing_position.buy_quantity or 0) + quantity_impact  # type: ignore
+                existing_position.buy_value = (existing_position.buy_value or 0) + (order.price * quantity_impact)  # type: ignore
+                existing_position.buy_avg_price = existing_position.buy_value / existing_position.buy_quantity if existing_position.buy_quantity else 0  # type: ignore
+            else:
+                existing_position.sell_quantity = (existing_position.sell_quantity or 0) + quantity_impact  # type: ignore
+                existing_position.sell_value = (existing_position.sell_value or 0) + (order.price * quantity_impact)  # type: ignore
+                existing_position.sell_avg_price = existing_position.sell_value / existing_position.sell_quantity if existing_position.sell_quantity else 0  # type: ignore
+            
+            if existing_position.net_quantity > 0:  # type: ignore
+                existing_position.direction = "BUY"  # type: ignore
+            elif existing_position.net_quantity < 0:  # type: ignore
+                existing_position.direction = "SELL"  # type: ignore
+            else:
+                existing_position.direction = "NONE"  # type: ignore
+            
+            existing_position.timestamp = datetime.utcnow()  # type: ignore
+
         else:
-            if trade_type == "BUY":
-                new_position = PositionModel(
-                    pseudo_account=pseudo_account,
-                    instrument_key=instrument_key,
-                    strategy_id=strategy_id,
-                    net_quantity=quantity_filled,
-                    buy_quantity=quantity_filled,
-                    buy_value=order.price * quantity_filled,
-                    buy_avg_price=order.price,
-                    direction="BUY"
-                )
-            elif trade_type == "SELL":
-                new_position = PositionModel(
-                    pseudo_account=pseudo_account,
-                    instrument_key=instrument_key,
-                    strategy_id=strategy_id,
-                    net_quantity=-quantity_filled,
-                    sell_quantity=quantity_filled,
-                    sell_value=order.price * quantity_filled,
-                    sell_avg_price=order.price,
-                    direction="SELL"
-                )
+            new_position = PositionModel(
+                pseudo_account=pseudo_account,
+                instrument_key=instrument_key,
+                strategy_id=strategy_id,
+                net_quantity=signed_quantity_impact,
+                buy_quantity=quantity_impact if trade_type == "BUY" else 0,  # type: ignore
+                sell_quantity=quantity_impact if trade_type == "SELL" else 0,  # type: ignore
+                buy_value=order.price * quantity_impact if trade_type == "BUY" else 0,  # type: ignore
+                sell_value=order.price * quantity_impact if trade_type == "SELL" else 0,  # type: ignore
+                buy_avg_price=order.price if trade_type == "BUY" else 0,  # type: ignore
+                sell_avg_price=order.price if trade_type == "SELL" else 0,  # type: ignore
+                direction=trade_type,
+                timestamp=datetime.utcnow(),
+                account_id=pseudo_account,
+                exchange=order.exchange,
+                symbol=order.symbol,
+                platform='StocksDeveloper', pnl=0.0, realised_pnl=0.0, unrealised_pnl=0.0,
+                state='OPEN',
+                category="INTRADAY",
+                type=order.product_type,
+                ltp=0.0, mtm=0.0, multiplier=1, net_value=0.0, overnight_quantity=0, stock_broker="StocksDeveloper", trading_account=pseudo_account
+            )
             self.db.add(new_position)
-
-        # 2. Handle Position to Holding Transition
-        if order.product_type not in ["OPTIONS", "FUTURES"]:  # Equity logic
-            if datetime.now().hour >= 15:  # After market close (adjust as needed)
-                existing_holding = self.db.query(HoldingModel).filter_by(
-                    pseudo_account=pseudo_account,
-                    instrument_key=instrument_key,
-                    strategy_id=strategy_id
-                ).first()
-
-                if existing_holding:
-                    existing_holding.quantity += existing_position.net_quantity
-                else:
-                    new_holding = HoldingModel(
-                        pseudo_account=pseudo_account,
-                        instrument_key=instrument_key,
-                        strategy_id=strategy_id,
-                        quantity=existing_position.net_quantity,
-                        product=order.product_type
-                    )
-                    self.db.add(new_holding)
-
-                self.db.delete(existing_position)  # delete the position record
-                order.transition_type = OrderTransitionType.POSITION_TO_HOLDING
 
         self.db.commit()
 
     async def get_organization_id_from_name(self, organization_name: str) -> str:
         """
-        Retrieves the organization ID from the organization name.
-        This is a placeholder - replace with your actual logic to fetch this from the user service or wherever you store organization data.
+        Retrieves the organization ID from the organization name using the User Service.
         """
-        # Placeholder logic - replace with your actual implementation
-        # For example, you might call the user service:
-        user_service_url = settings.user_service_url
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{user_service_url}/organizations/{organization_name}")
-            response.raise_for_status()
-            organization_data = response.json()
-            return organization_data["id"]
-        # Or you might have a local mapping:
-        # organization_mapping = {"Org A": "org_a_id", "Org B": "org_b_id"}
-        # return organization_mapping.get(organization_name)
-        # If not found, raise an exception:
-        # raise ValueError(f"Organization not found: {organization_name}")
-        pass
-
-    async def get_orders_by_organization_and_user(self, user_id: str) -> List[OrderSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        orders = self.db.query(OrderModel).filter_by(pseudo_account=user_id).all()
-        return [OrderSchema.from_orm(order) for order in orders]
-
-    async def get_positions_by_organization_and_user(self, user_id: str) -> List[PositionSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        positions = self.db.query(PositionModel).filter_by(pseudo_account=user_id).all()
-        return [PositionSchema.from_orm(position) for position in positions]
-
-    async def get_holdings_by_organization_and_user(self, user_id: str) -> List[HoldingSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        holdings = self.db.query(HoldingModel).filter_by(pseudo_account=user_id).all()
-        return [HoldingSchema.from_orm(holding) for holding in holdings]
-
-    async def get_margins_by_organization_and_user(self, user_id: str) -> List[MarginSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        margins = self.db.query(MarginModel).filter_by(pseudo_account=user_id).all()
-        return [MarginSchema.from_orm(margin) for margin in margins]
-
-    async def get_orders_by_strategy(self, strategy_name: str) -> List[OrderSchema]:
-        orders = self.db.query(OrderModel).filter_by(strategy_id=strategy_name).all()
-        return [OrderSchema.from_orm(order) for order in orders]
-
-    async def get_positions_by_strategy(self, strategy_name: str) -> List[PositionSchema]:
-        positions = self.db.query(PositionModel).filter_by(strategy_id=strategy_name).all()
-        return [PositionSchema.from_orm(position) for position in positions]
-
-    async def get_holdings_by_strategy(self, strategy_name: str) -> List[HoldingSchema]:
-        holdings = self.db.query(HoldingModel).filter_by(strategy_id=strategy_name).all()
-        return [HoldingSchema.from_orm(holding) for holding in holdings]
-
-    async def get_api_key(self, organization_id: str) -> str:
-        """
-        Celery task to retrieve the API key for a given organization, with caching.
-        """
-        redis_conn = connection_manager.get_redis_connection()
-        cached_key = redis_conn.get(f"api_key:{organization_id}")
-        if cached_key:
-            return cached_key.decode("utf-8")
-
-        # Call user service to get the API key
         user_service_url = settings.user_service_url
         try:
-            response = requests.get(f"{user_service_url}/api_key/{organization_id}")
-            response.raise_for_status()
-            api_key = response.json()["api_key"]
-            redis_conn.set(f"api_key:{organization_id}", api_key.encode("utf-8"), ex=3600)
-            return api_key
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{user_service_url}/organizations/by_name/{organization_name}")
+                response.raise_for_status()
+                organization_data = response.json()
+                if "id" not in organization_data:
+                    raise ValueError(f"User Service response for organization '{organization_name}' missing 'id'. Response: {organization_data}")
+                return organization_data["id"]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise ValueError(f"Organization '{organization_name}' not found via User Service.")
+            print(f"HTTP Error fetching organization ID for '{organization_name}': {e.response.status_code} - {e.response.text}")
+            raise
         except Exception as e:
-            print(f"Error getting API key: {e}")
-            raise e
-        finally:
-            redis_conn.close()
+            print(f"Error fetching organization ID for '{organization_name}': {e}")
+            raise
 
-async def place_regular_order(
+    # --- API Endpoints for Order Actions (FastAPI facing) ---
+
+    async def execute_trade_order(
+        self,
+        trade_order: TradeOrder,
+        organization_id: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ):
+        """
+        Receives a trade order, performs checks, persists it, and enqueues it for asynchronous processing.
+        This is a generic entry point for different order types via a unified TradeOrder schema.
+        """
+        if not self.rate_limiter.user_rate_limit(trade_order.user_id, organization_id) or \
+           not self.rate_limiter.account_rate_limit(trade_order.user_id, organization_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        # Construct instrument_key (assuming TradeOrder includes necessary attributes)
+        exchange_val = getattr(trade_order, 'exchange', None)
+        product_type_val = getattr(trade_order, 'product_type', None)
+        if exchange_val and product_type_val:
+            instrument_key = f"{exchange_val.value}@{trade_order.symbol}@{product_type_val.value}@{getattr(trade_order, 'expiry_date', '')}@{getattr(trade_order, 'option_type', '')}@{getattr(trade_order, 'strike_price', '')}"
+        else:
+            raise HTTPException(status_code=400, detail="Missing required fields: exchange or product_type")
+
+        strategy_id = getattr(trade_order, 'strategy_id', None)
+        if not strategy_id:
+             raise HTTPException(status_code=400, detail="Strategy ID is required for trade order execution.")
+        
+        side_val = getattr(trade_order, 'side', None)
+        if not side_val:
+            raise HTTPException(status_code=400, detail="Side is required for trade order execution.")
+            
+        await self._check_for_conflicting_orders(trade_order.user_id, instrument_key, side_val.value, strategy_id)
+
+        if side_val.value == "SELL":
+            await self._handle_holding_to_position_transition(trade_order.user_id, instrument_key, trade_order.quantity, strategy_id)
+
+        # Create OrderModel instance from TradeOrder schema
+        order_type_val = getattr(trade_order, 'order_type', None)
+        variety_val = getattr(trade_order, 'variety', None)
+        
+        order_entry = OrderModel(
+            pseudo_account=trade_order.user_id,
+            exchange=exchange_val.value if exchange_val else "",
+            symbol=trade_order.symbol,
+            trade_type=side_val.value if side_val else "",
+            order_type=order_type_val.value if order_type_val else "",
+            product_type=product_type_val.value if product_type_val else "",
+            quantity=trade_order.quantity,
+            price=trade_order.price,
+            trigger_price=getattr(trade_order, 'trigger_price', 0.0),
+            strategy_id=strategy_id,
+            instrument_key=instrument_key,
+            status="NEW", # Initial status before broker interaction
+            platform_time=datetime.utcnow(),
+            transition_type=OrderTransitionType.HOLDING_TO_POSITION if side_val.value == "SELL" else OrderTransitionType.NONE,
+            variety=variety_val.value if variety_val else ""
+        )
+        # Populate optional fields
+        for field in ['target', 'stoploss', 'trailing_stoploss', 'disclosed_quantity', 'validity', 'amo', 'comments', 'publisher_id']:
+            if hasattr(trade_order, field):
+                setattr(order_entry, field, getattr(trade_order, field))
+
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
+
+        # Enqueue the actual order processing to Celery
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), organization_id])
+
+        return {"message": "Order processing started", "order_id": order_entry.id}
+
+    async def place_regular_order(
         self,
         pseudo_account: str,
-        exchange: str,
+        exchange: str, # Using str here as it comes from API endpoint directly, will be converted to Enum value later
         symbol: str,
-        tradeType: str,
-        orderType: str,
-        productType: str,
+        tradeType: str, # Using str here, will be converted to Enum value later
+        orderType: str, # Using str here, will be converted to Enum value later
+        productType: str, # Using str here, will be converted to Enum value later
         quantity: int,
         price: float,
         triggerPrice: float = 0.0,
-        strategy_id: str = None,
-        organization_id: str = None,
-        background_tasks: BackgroundTasks = None,
+        strategy_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None,
     ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
+        """Places a regular order."""
+        # Add None checks for organization_id and strategy_id
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+        if strategy_id is None:
+            raise HTTPException(status_code=400, detail="Strategy ID is required")
+            
+        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or \
+           not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
             raise HTTPException(status_code=429, detail="Too Many Requests")
 
         instrument_key = f"{exchange}@{symbol}@{productType}@@@"
@@ -665,7 +541,6 @@ async def place_regular_order(
         if tradeType == "SELL":
             await self._handle_holding_to_position_transition(pseudo_account, instrument_key, quantity, strategy_id)
 
-        # Create the OrderModel (without interacting with StocksDeveloper yet)
         order_entry = OrderModel(
             pseudo_account=pseudo_account,
             exchange=exchange,
@@ -678,18 +553,20 @@ async def place_regular_order(
             trigger_price=triggerPrice,
             strategy_id=strategy_id,
             instrument_key=instrument_key,
+            status="NEW",
+            platform_time=datetime.utcnow(),
             transition_type=OrderTransitionType.HOLDING_TO_POSITION if tradeType == "SELL" else OrderTransitionType.NONE,
             variety="REGULAR"
         )
         self.db.add(order_entry)
         self.db.commit()
+        self.db.refresh(order_entry)
 
         await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), organization_id])
 
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": "Order processing started"}
+        return {"message": "Order processing started", "order_id": order_entry.id}
 
     async def place_cover_order(
         self,
@@ -701,44 +578,57 @@ async def place_regular_order(
         quantity: int,
         price: float,
         triggerPrice: float,
-        strategy_id: str = None,
-        organization_id: str = None,
-        background_tasks: BackgroundTasks = None,
+        strategy_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None,
     ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
+        """Places a cover order."""
+        # Add None checks
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+        if strategy_id is None:
+            raise HTTPException(status_code=400, detail="Strategy ID is required")
+        
+        # Type assertions after None checks
+        org_id: str = organization_id
+        strat_id: str = strategy_id
+        
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
             raise HTTPException(status_code=429, detail="Too Many Requests")
 
         instrument_key = f"{exchange}@{symbol}@@@"
-        await self._check_for_conflicting_orders(pseudo_account, instrument_key, tradeType, strategy_id)
+        await self._check_for_conflicting_orders(pseudo_account, instrument_key, tradeType, strat_id)
 
         if tradeType == "SELL":
-            await self._handle_holding_to_position_transition(pseudo_account, instrument_key, quantity, strategy_id)
+            await self._handle_holding_to_position_transition(pseudo_account, instrument_key, quantity, strat_id)
 
-        # Create the OrderModel (without interacting with StocksDeveloper yet)
         order_entry = OrderModel(
             pseudo_account=pseudo_account,
             exchange=exchange,
             symbol=symbol,
             trade_type=tradeType,
             order_type=orderType,
-            product_type="CO",  # Hardcoded for Cover Order
+            product_type="CO",  # Fixed: Cover Order uses "CO"
             quantity=quantity,
             price=price,
             trigger_price=triggerPrice,
-            strategy_id=strategy_id,
+            strategy_id=strat_id,  # Use strat_id
             instrument_key=instrument_key,
-            transition_type=OrderTransitionType.HOLDING_TO_POSITION if tradeType == "SELL" else OrderTransitionType.NONE,
-            variety="CO"
+            status="NEW",
+            platform_time=datetime.utcnow(),
+            transition_type=OrderTransitionType.HOLDING_TO_POSITION if tradeType == "SELL" else OrderTransitionType.NONE,  # type: ignore
+            variety="CO"  # Fixed: Cover Order uses "CO" variety
         )
         self.db.add(order_entry)
         self.db.commit()
+        self.db.refresh(order_entry)
 
         await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
 
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": "Cover Order processing started"}
+        return {"message": "Cover Order processing started", "order_id": order_entry.id}
 
     async def place_bracket_order(
         self,
@@ -753,73 +643,397 @@ async def place_regular_order(
         target: float,
         stoploss: float,
         trailingStoploss: float = 0.0,
-        strategy_id: str = None,
-        organization_id: str = None,
-        background_tasks: BackgroundTasks = None,
+        strategy_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None
     ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
+        """Places a bracket order."""
+        # Add None checks FIRST
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+        if strategy_id is None:
+            raise HTTPException(status_code=400, detail="Strategy ID is required")
+        
+        # NOW the type assertions work because we've eliminated None
+        org_id: str = organization_id  # Now guaranteed to be str
+        strat_id: str = strategy_id    # Now guaranteed to be str
+        
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
             raise HTTPException(status_code=429, detail="Too Many Requests")
 
         instrument_key = f"{exchange}@{symbol}@@@"
-        await self._check_for_conflicting_orders(pseudo_account, instrument_key, tradeType, strategy_id)
+        await self._check_for_conflicting_orders(pseudo_account, instrument_key, tradeType, strat_id)
 
         if tradeType == "SELL":
-            await self._handle_holding_to_position_transition(pseudo_account, instrument_key, quantity, strategy_id)
+            await self._handle_holding_to_position_transition(pseudo_account, instrument_key, quantity, strat_id)
 
-        # Create the OrderModel (without interacting with StocksDeveloper yet)
         order_entry = OrderModel(
             pseudo_account=pseudo_account,
             exchange=exchange,
             symbol=symbol,
             trade_type=tradeType,
             order_type=orderType,
-            product_type="BO",  # Hardcoded for Bracket Order
+            product_type="BO",
+            quantity=quantity,
+            price=price,
+            trigger_price=triggerPrice,
+            target=target,
+            stoploss=stoploss,
+            trailing_stoploss=trailingStoploss,
+            strategy_id=strat_id,  # Use strat_id instead of strategy_id
+            instrument_key=instrument_key,
+            status="NEW",
+            platform_time=datetime.utcnow(),
+            transition_type=OrderTransitionType.HOLDING_TO_POSITION if tradeType == "SELL" else OrderTransitionType.NONE,
+            variety="BO"
+        )
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
+        
+        # Add the missing import
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": "Bracket Order processing started", "order_id": order_entry.id}
+
+    async def get_orders_by_strategy(self, strategy_name: str, organization_id: Optional[str] = None, background_tasks: Optional[BackgroundTasks] = None) -> List[OrderSchema]:
+        """Retrieves orders associated with a specific strategy."""
+        orders = self.db.query(OrderModel).filter_by(strategy_id=strategy_name).all()
+        return [OrderSchema.from_orm(order) for order in orders]
+
+    async def get_positions_by_strategy(self, strategy_name: str) -> List[PositionSchema]:
+        """Retrieves positions associated with a specific strategy."""
+        positions = self.db.query(PositionModel).filter_by(strategy_id=strategy_name).all()
+        return [PositionSchema.from_orm(position) for position in positions]
+
+    async def get_holdings_by_strategy(self, strategy_name: str) -> List[HoldingSchema]:
+        """Retrieves holdings associated with a specific strategy."""
+        holdings = self.db.query(HoldingModel).filter_by(strategy_id=strategy_name).all()
+        return [HoldingSchema.from_orm(holding) for holding in holdings]
+    
+    async def get_api_key(self, organization_id: str) -> str:
+        """
+        Retrieves the API key for a given organization, with caching.
+        This function is designed to be called asynchronously within the FastAPI application context.
+        """
+        # This function is now correctly placed within the TradeService class
+        # It calls connection_manager.get_redis_connection() directly for its session
+        redis_conn = connection_manager.get_redis_connection()
+        cached_key = await redis_conn.get(f"api_key:{organization_id}")
+        if cached_key:
+            result = await cached_key  # Await the Redis result
+            return result.decode("utf-8")
+
+        user_service_url = settings.user_service_url
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{user_service_url}/api_key/{organization_id}")
+                response.raise_for_status()
+                api_key = response.json()["api_key"]
+                await redis_conn.set(f"api_key:{organization_id}", api_key.encode("utf-8"), ex=3600)
+                return api_key
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP Error getting API key for organization {organization_id}: {e.response.status_code} - {e.response.text}")
+            raise HTTPException(status_code=500, detail=f"Failed to retrieve API key: {e.response.status_code} - {e.response.text}")
+        except Exception as e:
+            print(f"Error getting API key for organization {organization_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred while retrieving API key: {str(e)}")
+        finally:
+            await redis_conn.aclose() # Close connection after use., strategy_id)
+
+        if tradeType == "SELL":
+            await self._handle_holding_to_position_transition(pseudo_account, instrument_key, quantity, strategy_id)
+
+        order_entry = OrderModel(
+            pseudo_account=pseudo_account,
+            exchange=exchange,
+            symbol=symbol,
+            trade_type=tradeType,
+            order_type=orderType,
+            product_type="CO",
             quantity=quantity,
             price=price,
             trigger_price=triggerPrice,
             strategy_id=strategy_id,
             instrument_key=instrument_key,
+            status="NEW",
+            platform_time=datetime.utcnow(),
             transition_type=OrderTransitionType.HOLDING_TO_POSITION if tradeType == "SELL" else OrderTransitionType.NONE,
-            variety="BO"
+            variety="CO"
         )
-        order_entry.target = target
-        order_entry.stoploss = stoploss
-        order_entry.trailingStoploss = trailingStoploss
         self.db.add(order_entry)
         self.db.commit()
+        self.db.refresh(order_entry)
 
         await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), organization_id])
 
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
+        return {"message": "Cover Order processing started", "order_id": order_entry.id}
 
-        return {"message": "Bracket Order processing started"}
+    async def get_trade_status(self, order_id: str):
+        # StocksDeveloper API call to get order status
+        cached_status = await self.redis_conn.get(f"order_status:{order_id}")
+        if cached_status:
+            return pickle.loads(cached_status)
+
+        # Check if stocksdeveloper_conn exists and is not None
+        if not hasattr(self, 'stocksdeveloper_conn') or self.stocksdeveloper_conn is None:
+            raise HTTPException(status_code=500, detail="StocksDeveloper connection not available")
+        
+        order_status = self.stocksdeveloper_conn.get_order_status(order_id=order_id)  # type: ignore
+
+        # Serialize and cache the status
+        cached_data = pickle.dumps(order_status)
+        await self.redis_conn.set(f"order_status:{order_id}", cached_data, ex=300)  # cache for 5 minutes
+
+        return order_status
+    
+    async def fetch_all_trading_accounts(self):
+        api_key_to_use = settings.stocksdeveloper_api_key
+        headers = {"api-key": api_key_to_use}
+        url = "https://apix.stocksdeveloper.in/account/fetchAllTradingAccounts"
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            trading_accounts_data = response.json()
+            return trading_accounts_data
+        except requests.exceptions.RequestException as e:
+            raise e
+        except json.JSONDecodeError as e:
+            raise e
+        
+    async def modify_order_by_platform_id(
+        self, 
+        pseudo_account: str, 
+        platform_id: str, 
+        order_type: Optional[str] = None,
+        quantity: Optional[int] = None, 
+        price: Optional[float] = None, 
+        trigger_price: Optional[float] = None,
+        organization_id: Optional[str] = None, 
+        background_tasks: Optional[BackgroundTasks] = None,
+    ):
+        """Modifies an existing order by its platform ID."""
+        
+        # Add None checks for required parameters
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+        
+        # Type assertions after None checks
+        org_id: str = organization_id
+        
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        order_entry = OrderModel(
+            pseudo_account=pseudo_account, 
+            platform=platform_id, 
+            variety="MODIFY",
+            status="PENDING_MODIFICATION", 
+            instrument_key="N/A", 
+            platform_time=datetime.utcnow(),
+            strategy_id="N/A", 
+            order_type=order_type or "N/A",  # Use default if None
+            quantity=quantity or 0,          # Use default if None
+            price=price or 0.0,              # Use default if None
+            trigger_price=trigger_price or 0.0,  # Use default if None
+            exchange="N/A", 
+            symbol="N/A",
+            trade_type="N/A", 
+            product_type="N/A"
+        )
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED, details=f"Modification request for platform_id: {platform_id}")
+
+        # Fix Celery task call
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": f"Modify order request submitted for platform_id: {platform_id}", "request_id": order_entry.id}
+
+    async def get_margins_by_organization_and_user(self, organization_name: str, user_id: str) -> List[MarginSchema]:
+        """Retrieves margins for a specific user within an organization."""
+        organization_id = await self.get_organization_id_from_name(organization_name)
+        if not self.rate_limiter.account_rate_limit(user_id, organization_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        margins = self.db.query(MarginModel).filter_by(pseudo_account=user_id).all()
+        return [MarginSchema.from_orm(margin) for margin in margins]
+    
+    async def cancel_all_orders(
+        self, pseudo_account: str, organization_id: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ):
+        """Cancels all pending orders for a user."""
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+
+        # Type assertion
+        org_id: str = organization_id
+
+        # Then use org_id instead of organization_id in rate limiter calls
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        order_entry = OrderModel(
+            pseudo_account=pseudo_account, variety="CANCEL_ALL_ORDERS",
+            instrument_key="N/A", status="PENDING_CANCEL_ALL",
+            platform_time=datetime.utcnow(), strategy_id="N/A",
+            exchange="N/A", symbol="N/A", trade_type="N/A",
+            order_type="N/A", product_type="N/A", quantity=0, price=0.0
+        )
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED, details="Cancel all orders request")
+
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": f"Cancel all orders request submitted", "request_id": order_entry.id}
+
+    async def get_orders_by_organization_and_user(self, organization_name: str, user_id: str) -> List[OrderSchema]:
+        """Retrieves orders for a specific user within an organization."""
+        organization_id = await self.get_organization_id_from_name(organization_name)
+        if not self.rate_limiter.account_rate_limit(user_id, organization_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        orders = self.db.query(OrderModel).filter_by(pseudo_account=user_id).all()
+        return [OrderSchema.from_orm(order) for order in orders]
+
+    async def square_off_position(
+        self, pseudo_account: str, position_category: str, position_type: str,
+        exchange: str, symbol: str, organization_id: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ):
+        """Squares off a specific position."""
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+
+        # Type assertion
+        org_id: str = organization_id
+
+        # Then use org_id instead of organization_id in rate limiter calls
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        instrument_key = f"{exchange}@{symbol}@@@"
+        order_entry = OrderModel(
+            pseudo_account=pseudo_account, variety="SQUARE_OFF_POSITION",
+            instrument_key=instrument_key, status="PENDING_SQUARE_OFF",
+            platform_time=datetime.utcnow(), strategy_id="N/A",
+            position_category=position_category, position_type=position_type,
+            exchange=exchange, symbol=symbol, trade_type="N/A",
+            order_type="N/A", product_type="N/A", quantity=0, price=0.0
+        )
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED, details=f"Square off request for {instrument_key}")
+
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": f"Square off position request submitted", "request_id": order_entry.id}
+
+    async def square_off_portfolio(
+        self, pseudo_account: str, position_category: str,
+        organization_id: Optional[str] = None, background_tasks: Optional[BackgroundTasks] = None,
+    ):
+        """Squares off an entire portfolio based on category."""
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+
+        # Type assertion
+        org_id: str = organization_id
+
+        # Then use org_id instead of organization_id in rate limiter calls
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        order_entry = OrderModel(
+            pseudo_account=pseudo_account, variety="SQUARE_OFF_PORTFOLIO",
+            instrument_key="N/A", status="PENDING_PORTFOLIO_SQUARE_OFF",
+            platform_time=datetime.utcnow(), strategy_id="N/A",
+            position_category=position_category, exchange="N/A", symbol="N/A",
+            trade_type="N/A", order_type="N/A", product_type="N/A", quantity=0, price=0.0
+        )
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED, details=f"Square off portfolio request for category: {position_category}")
+
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": f"Square off portfolio request submitted", "request_id": order_entry.id}
+
+    async def cancel_order_by_platform_id(
+        self, pseudo_account: str, platform_id: str, organization_id: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ):
+        """Cancels an order by its platform ID."""
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+
+        # Type assertion
+        org_id: str = organization_id
+
+        # Then use org_id instead of organization_id in rate limiter calls
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        order_entry = OrderModel(
+            pseudo_account=pseudo_account, platform=platform_id, variety="CANCEL",
+            status="PENDING_CANCEL", instrument_key="N/A", platform_time=datetime.utcnow(),
+            strategy_id="N/A", exchange="N/A", symbol="N/A", trade_type="N/A",
+            order_type="N/A", product_type="N/A", quantity=0, price=0.0
+        )
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED, details=f"Cancellation request for platform_id: {platform_id}")
+
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": f"Cancel order request submitted for platform_id: {platform_id}", "request_id": order_entry.id}
 
     async def place_advanced_order(
-        self,
-        variety: str,
-        pseudo_account: str,
-        exchange: str,
-        symbol: str,
-        tradeType: str,
-        orderType: str,
-        productType: str,
-        quantity: int,
-        price: float,
-        triggerPrice: float,
-        target: float,
-        stoploss: float,
-        trailingStoploss: float,
-        disclosedQuantity: int,
-        validity: str,
-        amo: bool,
-        strategyId: str,
-        comments: str,
-        publisherId: str,
-        organization_id: str,
-        background_tasks: BackgroundTasks = None,
+        self, variety: str, pseudo_account: str, exchange: str, symbol: str,
+        tradeType: str, orderType: str, productType: str, quantity: int,
+        price: float, triggerPrice: float, target: float, stoploss: float,
+        trailingStoploss: float, disclosedQuantity: int, validity: str,
+        amo: bool, strategyId: str, comments: str, publisherId: str,
+        organization_id: str, background_tasks: Optional[BackgroundTasks] = None,
     ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
+        """Places an advanced order (e.g., AMO)."""
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
+
+        # Type assertion
+        org_id: str = organization_id
+
+        # Then use org_id instead of organization_id in rate limiter calls
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
             raise HTTPException(status_code=429, detail="Too Many Requests")
 
         instrument_key = f"{exchange}@{symbol}@{productType}@@@"
@@ -828,549 +1042,74 @@ async def place_regular_order(
         if tradeType == "SELL":
             await self._handle_holding_to_position_transition(pseudo_account, instrument_key, quantity, strategyId)
 
-        # Create the OrderModel (without interacting with StocksDeveloper yet)
         order_entry = OrderModel(
-            variety=variety,
-            pseudo_account=pseudo_account,
-            exchange=exchange,
-            symbol=symbol,
-            trade_type=tradeType,
-            order_type=orderType,
-            product_type=productType,
-            quantity=quantity,
-            price=price,
-            trigger_price=triggerPrice,
-            target=target,
-            stoploss=stoploss,
-            trailingStoploss=trailingStoploss,
-            disclosed_quantity=disclosedQuantity,
-            validity=validity,
-            amo=amo,
-            strategy_id=strategyId,
-            comments=comments,
-            publisher_id=publisherId,
-            instrument_key=instrument_key,
+            variety=variety, pseudo_account=pseudo_account, exchange=exchange,
+            symbol=symbol, trade_type=tradeType, order_type=orderType,
+            product_type=productType, quantity=quantity, price=price,
+            trigger_price=triggerPrice, target=target, stoploss=stoploss,
+            trailing_stoploss=trailingStoploss, disclosed_quantity=disclosedQuantity,
+            validity=validity, amo=amo, strategy_id=strategyId, comments=comments,
+            publisher_id=publisherId, instrument_key=instrument_key, status="NEW",
+            platform_time=datetime.utcnow(),
             transition_type=OrderTransitionType.HOLDING_TO_POSITION if tradeType == "SELL" else OrderTransitionType.NONE
         )
         self.db.add(order_entry)
         self.db.commit()
+        self.db.refresh(order_entry)
 
         await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
-
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": "Advanced Order processing started"}
-
-    async def cancel_order_by_platform_id(
-        self,
-        pseudo_account: str,
-        platform_id: str,
-        organization_id: str,
-        background_tasks: BackgroundTasks = None,
-    ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        # Create a dummy OrderModel for asynchronous processing
-        order_entry = OrderModel(
-            pseudo_account=pseudo_account,
-            platform=platform_id,
-            variety="CANCEL",
-            instrument_key=None,
-        )
-        self.db.add(order_entry)
-        self.db.commit()
-
-        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
-
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": f"Cancel order request submitted for platform_id: {platform_id}"}
-
-    async def cancel_child_orders_by_platform_id(
-        self,
-        pseudo_account: str,
-        platform_id: str,
-        organization_id: str,
-        background_tasks: BackgroundTasks = None,
-    ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        # Create a dummy OrderModel for asynchronous processing
-        order_entry = OrderModel(
-            pseudo_account=pseudo_account,
-            platform=platform_id,
-            variety="CANCEL_CHILD",
-            instrument_key=None,
-        )
-        self.db.add(order_entry)
-        self.db.commit()
-
-        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
-
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": f"Cancel child orders request submitted for platform_id: {platform_id}"}
-
-    async def modify_order_by_platform_id(
-        self,
-        pseudo_account: str,
-        platform_id: str,
-        order_type: str = None,
-        quantity: int = None,
-        price: float = None,
-        trigger_price: float = None,
-        organization_id: str = None,
-        background_tasks: BackgroundTasks = None,
-    ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        # Create a dummy OrderModel for asynchronous processing
-        order_entry = OrderModel(
-            pseudo_account=pseudo_account,
-            platform=platform_id,
-            variety="MODIFY",
-            instrument_key=None,
-        )
-        order_entry.order_type = order_type
-        order_entry.quantity = quantity
-        order_entry.price = price
-        order_entry.trigger_price = trigger_price
-        self.db.add(order_entry)
-        self.db.commit()
-
-        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
-
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": f"Modify order request submitted for platform_id: {platform_id}"}
-
-    async def square_off_position(
-        self,
-        pseudo_account: str,
-        position_category: str,
-        position_type: str,
-        exchange: str,
-        symbol: str,
-        organization_id: str = None,
-        background_tasks: BackgroundTasks = None,
-    ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        instrument_key = f"{exchange}@{symbol}@@@"
-        # Create a dummy OrderModel for asynchronous processing
-        order_entry = OrderModel(
-            pseudo_account=pseudo_account,
-            variety="SQUARE_OFF_POSITION",
-            instrument_key=instrument_key,
-        )
-        order_entry.position_category = position_category
-        order_entry.position_type = position_type
-        order_entry.exchange = exchange
-        order_entry.symbol = symbol
-        self.db.add(order_entry)
-        self.db.commit()
-
-        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
-
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": f"Square off position request submitted"}
-
-    async def square_off_portfolio(
-        self,
-        pseudo_account: str,
-        position_category: str,
-        organization_id: str = None,
-        background_tasks: BackgroundTasks = None,
-    ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        # Create a dummy OrderModel for asynchronous processing
-        order_entry = OrderModel(
-            pseudo_account=pseudo_account,
-            variety="SQUARE_OFF_PORTFOLIO",
-            instrument_key=None,
-        )
-        order_entry.position_category = position_category
-        self.db.add(order_entry)
-        self.db.commit()
-
-        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
-
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": f"Square off portfolio request submitted"}
-
-    async def cancel_all_orders(
-        self,
-        pseudo_account: str,
-        organization_id: str = None,
-        background_tasks: BackgroundTasks = None,
-    ):
-        if not self.rate_limiter.user_rate_limit(pseudo_account, organization_id) or not self.rate_limiter.account_rate_limit(pseudo_account, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        # Create a dummy OrderModel for asynchronous processing
-        order_entry = OrderModel(
-            pseudo_account=pseudo_account,
-            variety="CANCEL_ALL_ORDERS",
-            instrument_key=None,
-        )
-        self.db.add(order_entry)
-        self.db.commit()
-
-        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED)
-
-        # Enqueue the task
-        process_order_task.delay(order_entry.__dict__, organization_id)
-
-        return {"message": f"Cancel all orders request submitted"}
-
-    async def get_trade_status(self, order_id: str, organization_id: str):
-        if not self.rate_limiter.user_rate_limit(order_id, organization_id) or not self.rate_limiter.account_rate_limit(order_id, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        # StocksDeveloper API call to get order status
-        cached_status = self.redis_conn.get(f"name:{pseudo_account}:order_status:{order_id}")
-        if cached_status:
-            return pickle.loads(cached_status)
-
-        api_key = await self._get_api_key(organization_id)
-        stocksdeveloper_conn = AutoTrader.create_instance(api_key, AutoTrader.SERVER_URL)
-        order_status = stocksdeveloper_conn.get_order_status(order_id=order_id)
-
-        self.redis_conn.set(f"name:{pseudo_account}:order_status:{order_id}", pickle.dumps(order_status), ex=300)
-
-        return order_status
-
-    async def fetch_and_store_data(self, pseudo_acc: str, organization_id: str):
-        if not self.rate_limiter.account_rate_limit(pseudo_acc, organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        api_key = await self._get_api_key(organization_id)
-        stocksdeveloper_conn = AutoTrader.create_instance(api_key, AutoTrader.SERVER_URL)
-
-        # Fetch and store margins
-        margins = stocksdeveloper_conn.read_platform_margins(pseudo_account=pseudo_acc)
-        for margin in margins:
-            instrument_key = f"{margin.get('exchange', '')}@{margin.get('symbol', '')}@@@"
-            margin_entry = MarginModel(**margin, pseudo_account=pseudo_acc, margin_date=datetime.utcnow(), instrument_key=instrument_key)
-            self.db.add(margin_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:margin:{margin['category']}", pickle.dumps(MarginSchema.from_orm(margin_entry)), ex=300)
-
-        # Fetch and store positions
-        positions = stocksdeveloper_conn.read_platform_positions(pseudo_account=pseudo_acc)
-        for position in positions:
-            instrument_key = f"{position.get('exchange', '')}@{position.get('symbol', '')}@@@"
-            position_entry = PositionModel(**position, pseudo_account=pseudo_acc, instrument_key=instrument_key)
-            self.db.add(position_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:position:{position['symbol']}", pickle.dumps(PositionSchema.from_orm(position_entry)), ex=300)
-
-        # Fetch and store holdings
-        holdings = stocksdeveloper_conn.read_platform_holdings(pseudo_account=pseudo_acc)
-        for holding in holdings:
-            instrument_key = f"{holding.get('exchange', '')}@{holding.get('symbol', '')}@@@"
-            holding_entry = HoldingModel(**holding, pseudo_account=pseudo_acc, instrument_key=instrument_key)
-            self.db.add(holding_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:holding:{holding['symbol']}", pickle.dumps(HoldingSchema.from_orm(holding_entry)), ex=300)
-
-        # Fetch and store orders
-        orders = stocksdeveloper_conn.read_platform_orders(pseudo_account=pseudo_acc)
-        for order in orders:
-            instrument_key = f"{order.get('exchange', '')}@{order.get('symbol', '')}@@@"
-            order_entry = OrderModel(**order, pseudo_account=pseudo_acc, instrument_key=instrument_key)
-            self.db.add(order_entry)
-            self.redis_conn.set(f"name:{pseudo_acc}:order:{order['id']}", pickle.dumps(OrderSchema.from_orm(order_entry)), ex=300)
-
-        self.db.commit()
-
-    async def fetch_all_trading_accounts(self, organization_id: str):
-        if not self.rate_limiter.account_rate_limit("fetchAllTradingAccounts", organization_id):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        api_key = await self._get_api_key(organization_id)
-        headers = {"api-key": api_key}
-        url = "https://apix.stocksdeveloper.in/account/fetchAllTradingAccounts"
-        try:
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            trading_accounts_data = response.json()
-            return trading_accounts_data
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    async def _check_for_conflicting_orders(self, pseudo_account: str, instrument_key: str, trade_type: str, strategy_id: str):
-        """
-        Checks for conflicting orders/positions/holdings on the same instrument.
-        """
-        existing_positions = self.db.query(PositionModel).filter_by(pseudo_account=pseudo_account, instrument_key=instrument_key).all()
-        existing_orders = self.db.query(OrderModel).filter_by(pseudo_account=pseudo_account, instrument_key=instrument_key).filter(OrderModel.status.in_(['PENDING', 'PARTIALLY_FILLED'])).all()
-        existing_holdings = self.db.query(HoldingModel).filter_by(pseudo_account=pseudo_account, instrument_key=instrument_key).all()
-
-        for position in existing_positions:
-            if position.strategy_id != strategy_id:
-                if trade_type == "BUY" and position.direction == "SELL":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL position exists from another strategy ({position.strategy_id})")
-                elif trade_type == "SELL" and position.direction == "BUY":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY position exists from another strategy ({position.strategy_id})")
-
-        for order in existing_orders:
-            if order.strategy_id != strategy_id:
-                if trade_type == "BUY" and order.trade_type == "SELL":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL order exists from another strategy ({order.strategy_id})")
-                elif trade_type == "SELL" and order.trade_type == "BUY":
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY order exists from another strategy ({order.strategy_id})")
-
-        for holding in existing_holdings:
-            if holding.strategy_id != strategy_id:
-                if trade_type == "BUY" and holding.quantity < 0:
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place BUY order when SELL holding exists from another strategy ({holding.strategy_id})")
-                elif trade_type == "SELL" and holding.quantity > 0:
-                    raise HTTPException(status_code=409, detail=f"Conflict: Cannot place SELL order when BUY holding exists from another strategy ({holding.strategy_id})")
-
-    async def _handle_holding_to_position_transition(
-        self,
-        pseudo_account: str,
-        instrument_key: str,
-        quantity: int,
-        strategy_id: str,
-    ):
-        """
-        Handles the transition of holdings to positions when a sell order is placed.
-        """
-        existing_holding = self.db.query(HoldingModel).filter_by(
-            pseudo_account=pseudo_account,
-            instrument_key=instrument_key,
-            strategy_id=strategy_id
-        ).first()
-
-        if not existing_holding:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Insufficient holdings for {instrument_key} for strategy {strategy_id}",
-            )
-
-        if existing_holding.quantity < quantity:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Insufficient holdings for {instrument_key} for strategy {strategy_id}",
-            )
-
-        existing_holding.quantity -= quantity
-        new_position = PositionModel(
-            pseudo_account=pseudo_account,
-            instrument_key=instrument_key,
-            strategy_id=strategy_id,
-            source_strategy_id=strategy_id,
-            net_quantity=-quantity,
-            sell_quantity=quantity,
-            direction="SELL"
-        )
-        self.db.add(new_position)
-        self.db.commit()
-
-    async def _update_positions_and_holdings(self, order: OrderModel):
-        """
-        Updates positions and holdings based on order execution.
-        This is the most complex logic.
-        """
-
-        if order.status not in ["COMPLETE", "PARTIALLY_FILLED"]:
-            return  # Only update on completed/partially filled orders
-
-        quantity_filled = order.filled_quantity if order.filled_quantity else order.quantity
-
-        if quantity_filled == 0:
-            return
-
-        instrument_key = order.instrument_key
-        pseudo_account = order.pseudo_account
-        strategy_id = order.strategy_id
-        trade_type = order.trade_type
-
-        # 1. Update/Create Position
-        existing_position = self.db.query(PositionModel).filter_by(
-            pseudo_account=pseudo_account,
-            instrument_key=instrument_key,
-            strategy_id=strategy_id
-        ).first()
-
-        if existing_position:
-            if trade_type == "BUY":
-                existing_position.net_quantity += quantity_filled
-                existing_position.buy_quantity += quantity_filled
-                existing_position.buy_value += order.price * quantity_filled
-                existing_position.buy_avg_price = existing_position.buy_value / existing_position.buy_quantity if existing_position.buy_quantity else 0
-                existing_position.direction = "BUY"
-            elif trade_type == "SELL":
-                existing_position.net_quantity -= quantity_filled
-                existing_position.sell_quantity += quantity_filled
-                existing_position.sell_value += order.price * quantity_filled
-                existing_position.sell_avg_price = existing_position.sell_value / existing_position.sell_quantity if existing_position.sell_quantity else 0
-                existing_position.direction = "SELL"
-        else:
-            if trade_type == "BUY":
-                new_position = PositionModel(
-                    pseudo_account=pseudo_account,
-                    instrument_key=instrument_key,
-                    strategy_id=strategy_id,
-                    net_quantity=quantity_filled,
-                    buy_quantity=quantity_filled,
-                    buy_value=order.price * quantity_filled,
-                    buy_avg_price=order.price,
-                    direction="BUY"
-                )
-            elif trade_type == "SELL":
-                new_position = PositionModel(
-                    pseudo_account=pseudo_account,
-                    instrument_key=instrument_key,
-                    strategy_id=strategy_id,
-                    net_quantity=-quantity_filled,
-                    sell_quantity=quantity_filled,
-                    sell_value=order.price * quantity_filled,
-                    sell_avg_price=order.price,
-                    direction="SELL"
-                )
-            self.db.add(new_position)
-
-        # 2. Handle Position to Holding Transition
-        if order.product_type not in ["OPTIONS", "FUTURES"]:  # Equity logic
-            if datetime.now().hour >= 15:  # After market close (adjust as needed)
-                existing_holding = self.db.query(HoldingModel).filter_by(
-                    pseudo_account=pseudo_account,
-                    instrument_key=instrument_key,
-                    strategy_id=strategy_id
-                ).first()
-
-                if existing_holding:
-                    existing_holding.quantity += existing_position.net_quantity
-                else:
-                    new_holding = HoldingModel(
-                        pseudo_account=pseudo_account,
-                        instrument_key=instrument_key,
-                        strategy_id=strategy_id,
-                        quantity=existing_position.net_quantity,
-                        product=order.product_type
-                    )
-                    self.db.add(new_holding)
-
-                self.db.delete(existing_position)  # delete the position record
-                order.transition_type = OrderTransitionType.POSITION_TO_HOLDING
-
-        self.db.commit()
-
-    async def get_organization_id_from_name(self, organization_name: str) -> str:
-        """
-        Retrieves the organization ID from the organization name.
-        This is a placeholder - replace with your actual logic to fetch this from the user service or wherever you store organization data.
-        """
-        # Placeholder logic - replace with your actual implementation
-        # For example, you might call the user service:
-        user_service_url = settings.user_service_url
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{user_service_url}/organizations/{organization_name}")
-            response.raise_for_status()
-            organization_data = response.json()
-            return organization_data["id"]
-        # Or you might have a local mapping:
-        # organization_mapping = {"Org A": "org_a_id", "Org B": "org_b_id"}
-        # return organization_mapping.get(organization_name)
-        # If not found, raise an exception:
-        # raise ValueError(f"Organization not found: {organization_name}")
-        pass
-
-    async def get_orders_by_organization_and_user(self, user_id: str) -> List[OrderSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        orders = self.db.query(OrderModel).filter_by(pseudo_account=user_id).all()
-        return [OrderSchema.from_orm(order) for order in orders]
-
-    async def get_positions_by_organization_and_user(self, user_id: str) -> List[PositionSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": "Advanced Order processing started", "order_id": order_entry.id}
+
+    async def get_positions_by_organization_and_user(self, organization_name: str, user_id: str) -> List[PositionSchema]:
+        """Retrieves positions for a specific user within an organization."""
+        organization_id = await self.get_organization_id_from_name(organization_name)
+        if not self.rate_limiter.account_rate_limit(user_id, organization_id):
             raise HTTPException(status_code=429, detail="Too Many Requests")
 
         positions = self.db.query(PositionModel).filter_by(pseudo_account=user_id).all()
         return [PositionSchema.from_orm(position) for position in positions]
+    
+    async def cancel_child_orders_by_platform_id(
+        self, pseudo_account: str, platform_id: str, organization_id: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ):
+        """Cancels child orders associated with a parent platform ID."""
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization ID is required")
 
-    async def get_holdings_by_organization_and_user(self, user_id: str) -> List[HoldingSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+        # Type assertion
+        org_id: str = organization_id
 
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
+        # Then use org_id instead of organization_id in rate limiter calls
+        if not self.rate_limiter.user_rate_limit(pseudo_account, org_id) or \
+        not self.rate_limiter.account_rate_limit(pseudo_account, org_id):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        order_entry = OrderModel(
+            pseudo_account=pseudo_account, platform=platform_id, variety="CANCEL_CHILD",
+            status="PENDING_CANCEL_CHILD", instrument_key="N/A", platform_time=datetime.utcnow(),
+            strategy_id="N/A", exchange="N/A", symbol="N/A", trade_type="N/A",
+            order_type="N/A", product_type="N/A", quantity=0, price=0.0
+        )
+        self.db.add(order_entry)
+        self.db.commit()
+        self.db.refresh(order_entry)
+
+        await self._create_order_event(order_entry, OrderEvent.ORDER_PLACED, details=f"Cancellation request for child orders of platform_id: {platform_id}")
+
+        from app.core.celery_config import celery_app
+        celery_app.send_task('process_order_task', args=[order_entry.to_dict(), org_id])
+
+        return {"message": f"Cancel child orders request submitted for platform_id: {platform_id}", "request_id": order_entry.id}
+
+    async def get_holdings_by_organization_and_user(self, organization_name: str, user_id: str) -> List[HoldingSchema]:
+        """Retrieves holdings for a specific user within an organization."""
+        organization_id = await self.get_organization_id_from_name(organization_name)
+        if not self.rate_limiter.account_rate_limit(user_id, organization_id):
             raise HTTPException(status_code=429, detail="Too Many Requests")
 
         holdings = self.db.query(HoldingModel).filter_by(pseudo_account=user_id).all()
         return [HoldingSchema.from_orm(holding) for holding in holdings]
-
-    async def get_margins_by_organization_and_user(self, user_id: str) -> List[MarginSchema]:
-        try:
-            organization_name = await self._get_organization_name_for_user(user_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-        if not self.rate_limiter.account_rate_limit(user_id, organization_name):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
-        margins = self.db.query(MarginModel).filter_by(pseudo_account=user_id).all()
-        return [MarginSchema.from_orm(margin) for margin in margins]
-
-    async def get_orders_by_strategy(self, strategy_name: str) -> List[OrderSchema]:
-        orders = self.db.query(OrderModel).filter_by(strategy_id=strategy_name).all()
-        return [OrderSchema.from_orm(order) for order in orders]
-
-    async def get_positions_by_strategy(self, strategy_name: str) -> List[PositionSchema]:
-        positions = self.db.query(PositionModel).filter_by(strategy_id=strategy_name).all()
-        return [PositionSchema.from_orm(position) for position in positions]
-
-    async def get_holdings_by_strategy(self, strategy_name: str) -> List[HoldingSchema]:
-        holdings = self.db.query(HoldingModel).filter_by(strategy_id=strategy_name).all()
-        return [HoldingSchema.from_orm(holding) for holding in holdings]
-
-    async def get_api_key(self, organization_id: str) -> str:
-        """
-        Celery task to retrieve the API key for a given organization, with caching.
-        """
-        redis_conn = connection_manager.get_redis_connection()
-        cached_key = redis_conn.get(f"api_key:{organization_id}")
-        if cached_key:
-            return cached_key.decode("utf-8")
-
-        # Call user service to get the API key
-        user_service_url = settings.user_service_url
-        try:
-            response = requests.get(f"{user_service_url}/api_key/{organization_id}")
-            response.raise_for_status()
-            api_key = response.json()["api_key"]
-            redis_conn.set(f"api_key:{organization_id}", api_key.encode("utf-8"), ex=3600)
-            return api_key
-        except Exception as e:
-            print(f"Error getting API key: {e}")
-            raise e
-        finally:
-            redis_conn.close()

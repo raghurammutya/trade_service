@@ -2,7 +2,7 @@
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
-from app.core.enums import OrderEvent
+from shared_architecture.enums import OrderEvent
 
 class OrderEventSchema(BaseModel):
     id: Optional[int] = None
