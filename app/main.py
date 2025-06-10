@@ -13,7 +13,7 @@ from shared_architecture.utils.logging_utils import log_info, log_exception
 # Imports for your specific microservice components
 from app.api.endpoints import trade_endpoints # Your API routes
 from app.context.global_app import set_app # For global app state
-from app.settings import tradeServiceSettings # Your custom settings class
+from app.core.config import settings as tradeServiceSettings # Your custom settings class
 
 # Imports for database model discovery
 # You need to import at least one Base from your local models
@@ -30,7 +30,12 @@ from app.models.order_event_model import OrderEventModel
 # Import your Celery tasks module to ensure tasks are registered for auto-discovery
 # Even though celery_app.autodiscover_tasks handles finding them, importing the module
 # ensures it's loaded by the main app process.
-import app.tasks.trade_tasks
+# Import individual task files
+from app.tasks import create_order_event
+from app.tasks import get_api_key_task
+from app.tasks import process_order_task
+from app.tasks import update_order_status
+from app.tasks import update_positions_and_holdings_task
 
 
 # Start the service - This function from shared_architecture now handles:

@@ -1,7 +1,7 @@
 # trade_service/app/schemas/trade_schemas.py
 from pydantic import BaseModel, Field
 from typing import Optional
-from app.core.enums import Exchange, TradeType, OrderType, ProductType, Variety, Validity
+from shared_architecture.enums import Exchange, TradeType, OrderType, ProductType, Variety, Validity
 
 class TradeOrder(BaseModel):
     user_id: str

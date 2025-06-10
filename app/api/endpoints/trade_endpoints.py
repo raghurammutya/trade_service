@@ -14,7 +14,7 @@ from shared_architecture.schemas.trade_schemas import TradeOrder, TradeStatus
 router = APIRouter()
 
 @router.post("/execute", response_model=TradeStatus)
-async def execute_trade(trade_order: TradeOrder, organization_id: str, db: Session = Depends(get_db), background_tasks: BackgroundTasks = Depends(BackgroundTasks)):
+async def execute_trade(trade_order: TradeOrder, organization_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     try:
         trade_service = TradeService(db)
         return await trade_service.execute_trade_order(trade_order, organization_id, background_tasks)
@@ -57,10 +57,10 @@ async def place_regular_order(
     productType: ProductType,
     quantity: int,
     price: float,
+    background_tasks: BackgroundTasks,
     triggerPrice: Optional[float] = 0.0,
-    strategy_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    strategy_id: Optional[str] = None,
 ):
     try:
         trade_service = TradeService(db)
@@ -92,9 +92,9 @@ async def place_cover_order(
     price: float,
     triggerPrice: float,
     organization_id: str,
-    strategy_id: Optional[str] = None,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    strategy_id: Optional[str] = None,
 ):
     try:
         trade_service = TradeService(db)
@@ -127,10 +127,11 @@ async def place_bracket_order(
     triggerPrice: float,
     target: float,
     stoploss: float,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
     trailingStoploss: Optional[float] = 0.0,
     strategy_id: Optional[str] = None, 
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+
 ):
     try:
         trade_service = TradeService(db)
@@ -157,8 +158,7 @@ async def place_bracket_order(
 async def place_advanced_order(
     order: AdvancedOrder,
     organization_id: str,
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -193,8 +193,7 @@ async def cancel_order(
     pseudo_account: str,
     platform_id: str,
     organization_id: str,
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -209,8 +208,7 @@ async def cancel_child_orders(
     pseudo_account: str,
     platform_id: str,
     organization_id: str,
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -225,8 +223,7 @@ async def modify_order(
     platform_id: str,
     order: ModifyOrder,
     organization_id: str,
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -251,8 +248,7 @@ async def square_off_position(
     exchange: str,
     symbol: str,
     organization_id: str,
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -270,11 +266,11 @@ async def square_off_position(
 
 @router.post("/square_off_portfolio")
 async def square_off_portfolio(
+
     pseudo_account: str,
     position_category: str,
     organization_id: str,
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -288,8 +284,7 @@ async def square_off_portfolio(
 async def cancel_all_orders(
     pseudo_account: str,
     organization_id: str,
-    db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks),
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -354,3 +349,4 @@ async def get_holdings_by_strategy(strategy_name: str, db: Session = Depends(get
         return await trade_service.get_holdings_by_strategy(strategy_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    

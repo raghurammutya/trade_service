@@ -11,12 +11,13 @@ class Settings(BaseSettings):
     timescaledb_url: str
     redis_url: str
     telegram_bot_token: str = None
+    stocksdeveloper_api_key: str = None  # Add this missing field
     user_rate_limit_5s: int = 500
     user_rate_limit_1m: int = 1500
     account_rate_limit_5s: int = 60
     account_rate_limit_1m: int = 130
     account_rate_limit_5m: int = 300
-    mock_order_execution: bool = False  # Add this setting
+    mock_order_execution: bool = False
 
     model_config = SettingsConfigDict(env_file=".env")
 

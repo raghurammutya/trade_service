@@ -30,4 +30,4 @@ class HoldingSchema(BaseModel):
     source_strategy_id: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
