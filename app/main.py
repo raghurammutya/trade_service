@@ -16,7 +16,7 @@ from shared_architecture.utils.logging_utils import log_info, log_exception
 # Imports for your specific microservice components
 from app.api.endpoints import trade_endpoints # Your API routes
 from app.api.endpoints import ledger_endpoints
-# from app.api.endpoints import redis_data_endpoints # Redis data API - temporarily disabled
+from app.api.endpoints import redis_data_endpoints # Redis data API
 from app.api.endpoints import management_endpoints # Management and monitoring
 # from app.api.endpoints import strategy_retagging_endpoints # Strategy retagging - temporarily disabled
 from app.context.global_app import set_app # For global app state
@@ -55,7 +55,7 @@ set_app(app) # Set the app globally if needed by other parts of your shared arch
 # Include your API routers
 app.include_router(trade_endpoints.router, prefix="/trades", tags=["trades"])
 app.include_router(ledger_endpoints.router, prefix="/ledger", tags=["ledger"])
-# app.include_router(redis_data_endpoints.router, prefix="/data", tags=["redis_data"]) # temporarily disabled
+app.include_router(redis_data_endpoints.router, prefix="/data", tags=["redis_data"])
 app.include_router(management_endpoints.router, prefix="/management", tags=["management"])
 # app.include_router(strategy_retagging_endpoints.router, prefix="/strategies", tags=["strategy_retagging"]) # temporarily disabled
 
