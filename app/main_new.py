@@ -307,7 +307,7 @@ def run_uvicorn():
     uvicorn.run(
         app="app.main:app",
         host="0.0.0.0",
-        port=3000,
+        port=8004,
         reload=False,  # Disabled for container compatibility and production
         access_log=True,
         log_level="info"
@@ -343,7 +343,7 @@ if __name__ == "__main__":
             uvicorn.run(
                 "app.main:app",
                 host="0.0.0.0", 
-                port=3000,
+                port=8004,
                 reload=True,
                 log_level="info"
             )
@@ -353,7 +353,7 @@ if __name__ == "__main__":
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0", 
-            port=3000,
+            port=8004,
             reload=True,
             log_level="info"
         )
