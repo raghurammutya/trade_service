@@ -104,6 +104,17 @@ class ExternalOrderDetector:
         # Generate internal order ID
         order_id = f"EXT_{broker_order.get('order_id')}"
         
+        # Ensure instrument_key is properly set
+        instrument_key = broker_order.get('instrument_key', '')
+        if not instrument_key:
+            # Generate instrument_key from trading_symbol if missing
+            from shared_architecture.utils.instrument_key_helper import symbol_to_instrument_key
+            trading_symbol = broker_order.get('tradingsymbol', '')
+            exchange = broker_order.get('exchange', 'NSE')
+            if trading_symbol:
+                instrument_key = symbol_to_instrument_key(trading_symbol, exchange)
+                logger.info(f"Generated instrument_key {instrument_key} for external order {order_id}")
+        
         # Determine order details
         order_model = OrderModel(
             order_id=order_id,
@@ -111,7 +122,7 @@ class ExternalOrderDetector:
             pseudo_account=pseudo_account,
             organization_id=organization_id,
             trading_symbol=broker_order.get('tradingsymbol'),
-            instrument_key=broker_order.get('instrument_key', ''),
+            instrument_key=instrument_key,
             exchange=broker_order.get('exchange'),
             order_type=broker_order.get('order_type', 'MARKET'),
             trade_type=broker_order.get('transaction_type', '').upper(),

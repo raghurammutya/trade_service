@@ -20,8 +20,36 @@ from app.services.external_order_detector import ExternalOrderDetector
 from shared_architecture.utils.redis_data_manager import RedisDataManager
 from shared_architecture.connections.connection_manager import connection_manager
 from shared_architecture.db.models.order_model import OrderModel
+from shared_architecture.db.models.broker import Broker
 
 logger = logging.getLogger(__name__)
+
+# Import AutoTrader availability check
+try:
+    from com.dakshata.autotrader.api.AutoTrader import AutoTrader
+    AUTOTRADER_AVAILABLE = True
+except ImportError:
+    AUTOTRADER_AVAILABLE = False
+    
+    # Mock AutoTrader classes
+    class AutoTraderResponse:
+        def __init__(self, success=False, result=None, message="Mock response"):
+            self._success = success
+            self.result = result or []
+            self.message = message
+        
+        def success(self):
+            return self._success
+
+    class AutoTrader:
+        @staticmethod
+        def create_instance(api_key, server_url):
+            return AutoTraderMock()
+        SERVER_URL = "mock_url"
+
+    class AutoTraderMock:
+        def read_platform_orders(self, pseudo_account=None):
+            return AutoTraderResponse(success=True, result=[], message="Mock: AutoTrader not available")
 
 # Configuration parameters
 EXTERNAL_ORDER_CHECK_INTERVAL = int(os.getenv('EXTERNAL_ORDER_CHECK_MINUTES', '30'))  # Default 30 minutes
@@ -389,23 +417,120 @@ def is_redis_cluster() -> bool:
     return environment == 'production' and bool(os.getenv('REDIS_CLUSTER_HOSTS'))
 
 def get_broker_client(pseudo_account: str):
-    """Get broker client for account"""
-    # TODO: Implement actual broker client factory based on account type
-    # For now, return None (simulation mode)
-    return None
+    """Get broker client for account using existing AutoTrader infrastructure"""
+    try:
+        from app.services.trade_service import TradeService
+        from shared_architecture.db.session import get_db
+        
+        # Use existing trade service that has AutoTrader integration
+        db_session = next(get_db())
+        trade_service = TradeService(db_session)
+        
+        # Return the trade service as broker client (it has read methods)
+        return trade_service
+    except Exception as e:
+        logger.error(f"Failed to get broker client for {pseudo_account}: {e}")
+        return None
 
 def fetch_broker_orders(broker_client, pseudo_account: str) -> List[Dict]:
-    """Fetch orders from broker API"""
+    """Fetch orders from broker API using existing TradeService"""
     if broker_client is None:
         return []
     
     try:
-        # Real broker API call would go here
-        orders = broker_client.orders()
-        return orders
+        # Use trade service existing logic to create AutoTrader connection
+        logger.info(f"Fetching orders from AutoTrader for {pseudo_account}")
+        
+        # Get organization from broker client or use default
+        organization_id = getattr(broker_client, 'organization_id', 'stocksblitz')
+        
+        # Create AutoTrader connection (simplified version of trade_service logic)
+        from app.core.config import settings
+        
+        # Get API key from broker configuration (use first available for now)
+        broker_entry = broker_client.db.query(Broker).first()
+        if not broker_entry:
+            logger.warning(f"No broker configuration found in database")
+            return []
+            
+        api_key = broker_entry.api_key
+        if not api_key:
+            logger.warning(f"No API key found in broker configuration")
+            return []
+        
+        # Create AutoTrader connection
+        try:
+            if AUTOTRADER_AVAILABLE:
+                from com.dakshata.autotrader.api.AutoTrader import AutoTrader
+                stocksdeveloper_conn = AutoTrader.create_instance(api_key, AutoTrader.SERVER_URL)
+            else:
+                # Mock mode
+                stocksdeveloper_conn = AutoTrader.create_instance(api_key, AutoTrader.SERVER_URL)
+        except Exception as e:
+            logger.error(f"Failed to create AutoTrader connection: {e}")
+            return []
+        
+        if stocksdeveloper_conn is None:
+            logger.warning(f"AutoTrader connection is None for {pseudo_account}")
+            return []
+        
+        # Create AutoTrader adapter for consistent data conversion
+        from shared_architecture.utils.symbol_converter import AutoTraderAdapter
+        adapter = AutoTraderAdapter(stocksdeveloper_conn)
+        
+        # Use adapter to read platform orders
+        orders_result = adapter.read_platform_orders(pseudo_account)
+        
+        if not orders_result or not orders_result.get('success'):
+            logger.info(f"No orders found for {pseudo_account} (may be expected in mock mode): {orders_result}")
+            return []
+        
+        # Get raw orders from result
+        raw_orders = orders_result.get('result', [])
+        converted_orders = []
+        
+        for order in raw_orders:
+            # Orders from adapter are already dicts with instrument_key
+            converted_order = _convert_autotrader_order_format(order)
+            converted_orders.append(converted_order)
+        
+        logger.info(f"✅ Fetched {len(converted_orders)} orders from AutoTrader for {pseudo_account}")
+        return converted_orders
+        
     except Exception as e:
-        logger.error(f"Error fetching broker orders: {e}")
+        logger.error(f"Error fetching broker orders for {pseudo_account}: {e}")
         return []
+
+def _convert_autotrader_order_format(autotrader_order: Dict) -> Dict:
+    """Convert AutoTrader order format to expected external detector format"""
+    from shared_architecture.utils.instrument_key_helper import symbol_to_instrument_key
+    
+    # Map AutoTrader fields to expected format
+    trading_symbol = autotrader_order.get('trading_symbol') or autotrader_order.get('symbol', '')
+    exchange = autotrader_order.get('exchange', 'NSE')
+    
+    # Generate instrument_key from trading symbol
+    instrument_key = symbol_to_instrument_key(trading_symbol, exchange)
+    
+    return {
+        'order_id': autotrader_order.get('order_id') or autotrader_order.get('id'),
+        'tradingsymbol': trading_symbol,
+        'instrument_key': instrument_key,
+        'exchange': exchange,
+        'order_type': autotrader_order.get('order_type', 'MARKET'),
+        'transaction_type': autotrader_order.get('trade_type') or autotrader_order.get('side', 'BUY'),
+        'quantity': autotrader_order.get('quantity', 0),
+        'price': autotrader_order.get('price', 0),
+        'trigger_price': autotrader_order.get('trigger_price', 0),
+        'status': autotrader_order.get('status', 'NEW'),
+        'filled_quantity': autotrader_order.get('filled_quantity', 0),
+        'average_price': autotrader_order.get('average_price', 0),
+        'product': autotrader_order.get('product_type', 'MIS'),
+        'validity': autotrader_order.get('validity', 'DAY'),
+        'variety': autotrader_order.get('variety', 'regular'),
+        'order_timestamp': autotrader_order.get('timestamp') or autotrader_order.get('created_at'),
+        'broker_data': autotrader_order  # Preserve original data
+    }
 
 def get_last_position_generation_time(db, pseudo_account: str) -> Optional[datetime]:
     """Get last position generation timestamp"""
