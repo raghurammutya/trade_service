@@ -1,6 +1,6 @@
-from shared_architecture.connections.connection_manager import connection_manager
-from app.models.order_model import OrderModel
+from shared_architecture.db.models.order_model import OrderModel
 from app.core.celery_config import celery_app
+from app.utils.celery_db_helper import get_celery_db_session
 import asyncio
 
 @celery_app.task
@@ -8,7 +8,8 @@ def update_positions_and_holdings_task(order_id: int):
     """
     Celery task to update positions and holdings in the database based on a filled order.
     """
-    db = connection_manager.get_sync_timescaledb_session()
+    db = get_celery_db_session()
+    
     try:
         order = db.query(OrderModel).filter_by(id=order_id).first()
         if order:

@@ -1,19 +1,19 @@
 # app/tasks/create_order_event.py
 
-from celery import Celery
-from shared_architecture.connections.connection_manager import connection_manager
-from shared_architecture.db.models import OrderModel, OrderEventModel
-from shared_architecture.enums import OrderEvent  # Ensure OrderEvent enum is imported correctly
+from shared_architecture.db.models.order_model import OrderModel
+from shared_architecture.db.models.order_event_model import OrderEventModel
+from shared_architecture.enums import OrderEvent
 from app.core.celery_config import celery_app
+from app.utils.celery_db_helper import get_celery_db_session
 from typing import Optional
 
 @celery_app.task
 def create_order_event_task(order_id: int, event_type: str, details: Optional[str] = None):
-
     """
     Celery task to create an order event in the database.
     """
-    db = connection_manager.get_sync_timescaledb_session()
+    db = get_celery_db_session()
+    
     try:
         order = db.query(OrderModel).filter_by(id=order_id).first()
         if order:

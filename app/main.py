@@ -18,6 +18,10 @@ from app.api.endpoints import trade_endpoints # Your API routes
 from app.api.endpoints import ledger_endpoints
 from app.api.endpoints import redis_data_endpoints # Redis data API
 from app.api.endpoints import management_endpoints # Management and monitoring
+from app.api.endpoints import strategy_endpoints # Strategy management
+from app.api.endpoints import historical_import_endpoints # Historical trade import
+from app.api.endpoints import external_order_endpoints # External order detection
+from app.api.endpoints import position_generation_endpoints # Position/Holdings generation
 # from app.api.endpoints import strategy_retagging_endpoints # Strategy retagging - temporarily disabled
 from app.context.global_app import set_app # For global app state
 from app.core.config import settings as tradeServiceSettings # Your custom settings class
@@ -35,6 +39,7 @@ from shared_architecture.db.models.position_model import Base as PositionBase
 from shared_architecture.db.models.order_model import Base as OrderBase
 from shared_architecture.db.models.margin_model import Base as MarginBase
 from shared_architecture.db.models.order_event_model import Base as OrderEventBase
+from shared_architecture.db.models.strategy_model import Base as StrategyBase
 from shared_architecture.db.session import sync_engine
 
 # Create tables (you might want to move this to a migration script)
@@ -44,6 +49,7 @@ try:
     OrderBase.metadata.create_all(bind=sync_engine)
     MarginBase.metadata.create_all(bind=sync_engine)
     OrderEventBase.metadata.create_all(bind=sync_engine)
+    StrategyBase.metadata.create_all(bind=sync_engine)
     log_info("✅ Database tables created/verified")
 except Exception as e:
     log_exception(f"❌ Failed to create database tables: {e}")
@@ -57,6 +63,10 @@ app.include_router(trade_endpoints.router, prefix="/trades", tags=["trades"])
 app.include_router(ledger_endpoints.router, prefix="/ledger", tags=["ledger"])
 app.include_router(redis_data_endpoints.router, prefix="/data", tags=["redis_data"])
 app.include_router(management_endpoints.router, prefix="/management", tags=["management"])
+app.include_router(strategy_endpoints.router, prefix="/strategies", tags=["strategy_management"])
+app.include_router(historical_import_endpoints.router, prefix="/historical", tags=["historical_import"])
+app.include_router(external_order_endpoints.router, tags=["external_orders"])
+app.include_router(position_generation_endpoints.router, prefix="/generate", tags=["position_generation"])
 # app.include_router(strategy_retagging_endpoints.router, prefix="/strategies", tags=["strategy_retagging"]) # temporarily disabled
 
 

@@ -1,0 +1,21 @@
+# Test Requirements for Trade Service
+pytest==7.4.0
+pytest-asyncio==0.21.0
+pytest-mock==3.11.1
+pytest-cov==4.1.0
+httpx==0.24.1
+fastapi==0.100.1
+pydantic==1.10.12
+sqlalchemy==2.0.21
+asyncpg==0.28.0
+redis==5.0.1
+aio-pika==9.3.0
+
+# For mock testing
+unittest-mock==1.0.1
+
+# For test client
+requests==2.31.0
+
+# Optional: for coverage reports
+coverage==7.3.0

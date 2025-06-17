@@ -14,7 +14,7 @@ class AdvancedOrder(BaseModel):
     variety: Variety
     pseudo_account: str
     exchange: Exchange
-    symbol: str
+    instrument_key: str
     tradeType: TradeType
     orderType: OrderType
     productType: ProductType
