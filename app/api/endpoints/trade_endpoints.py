@@ -1,17 +1,29 @@
 # trade_service/app/api/endpoints/trade_endpoints.py
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from app.schemas.trade_schemas import TradeOrder, TradeStatus, AdvancedOrder, ModifyOrder
 from app.services.trade_service import TradeService
 from shared_architecture.db import get_db
 from sqlalchemy.orm import Session
-from typing import Optional,List
+from typing import Optional, List
 from shared_architecture.enums import Exchange, TradeType, OrderType, ProductType, Variety, Validity
 from shared_architecture.schemas.margin_schema import MarginSchema
 from shared_architecture.schemas.position_schema import PositionSchema
 from shared_architecture.schemas.holding_schema import HoldingSchema
 from shared_architecture.schemas.order_schema import OrderSchema
 from shared_architecture.schemas.trade_schemas import TradeOrder, TradeStatus
+from app.utils.rate_limiter import RateLimiter
+
 router = APIRouter()
+
+def get_trade_service(db: Session = Depends(get_db)):
+    """Dependency to create TradeService with proper connections"""
+    trade_service = TradeService(db)
+    
+    # Note: Request object is not available in dependency context
+    # Redis connection will be handled by TradeService directly
+    print("DEBUG: TradeService created for request")
+    
+    return trade_service
 
 @router.post("/execute", response_model=TradeStatus)
 async def execute_trade(trade_order: TradeOrder, organization_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -40,18 +52,26 @@ async def fetch_all_users(organization_id: str, db: Session = Depends(get_db)):
 @router.post("/fetch_and_store/{pseudo_account}")
 async def fetch_and_store(pseudo_account: str, organization_id: str, db: Session = Depends(get_db)):
     try:
+        print(f"DEBUG: Starting fetch_and_store for {pseudo_account}, org: {organization_id}")
         trade_service = TradeService(db)
-        await trade_service.fetch_and_store_data(pseudo_account, organization_id)
+        print(f"DEBUG: TradeService created successfully")
+        
+        result = await trade_service.fetch_and_store_data(pseudo_account, organization_id)
+        print(f"DEBUG: fetch_and_store_data completed successfully")
+        
         return {"message": f"Data fetched and stored for {pseudo_account}"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"ERROR in endpoint: {type(e).__name__}: {str(e)}")
+        import traceback
+        print(f"ERROR traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 @router.post("/regular_order")
 async def place_regular_order(
     pseudo_account: str,
     organization_id: str,
     exchange: Exchange,
-    symbol: str,
+    instrument_key: str,  # Changed from 'symbol' to 'instrument_key'
     tradeType: TradeType,
     orderType: OrderType,
     productType: ProductType,
@@ -62,12 +82,18 @@ async def place_regular_order(
     db: Session = Depends(get_db),
     strategy_id: Optional[str] = None,
 ):
+    """
+    Place a regular order using instrument key format
+    
+    Args:
+        instrument_key: Format like NSE@RELIANCE@equities or NSE@RELIANCE@futures@26-Jun-2025
+    """
     try:
         trade_service = TradeService(db)
         return await trade_service.place_regular_order(
             pseudo_account,
             exchange.value,
-            symbol,
+            instrument_key,  # Pass the full instrument key
             tradeType.value,
             orderType.value,
             productType.value,
@@ -84,29 +110,36 @@ async def place_regular_order(
 @router.post("/cover_order")
 async def place_cover_order(
     pseudo_account: str,
+    organization_id: str,
     exchange: Exchange,
-    symbol: str,
+    instrument_key: str,  # AutoTrader symbol format
     tradeType: TradeType,
     orderType: OrderType,
+    productType: ProductType,
     quantity: int,
     price: float,
-    triggerPrice: float,
-    organization_id: str,
     background_tasks: BackgroundTasks,
+    triggerPrice: Optional[float] = 0.0,
     db: Session = Depends(get_db),
     strategy_id: Optional[str] = None,
 ):
+    """
+    Place a regular order using instrument key format
+    
+    Args:
+        instrument_key: Format like NSE@RELIANCE@equities or NSE@RELIANCE@futures@26-Jun-2025
+    """
     try:
         trade_service = TradeService(db)
         return await trade_service.place_cover_order(
             pseudo_account,
             exchange.value,
-            symbol,
+            instrument_key,  # Pass AutoTrader symbol format directly
             tradeType.value,
             orderType.value,
             quantity,
             price,
-            triggerPrice,
+            triggerPrice or 0.0,
             strategy_id,      
             organization_id, 
             background_tasks,
@@ -119,7 +152,7 @@ async def place_bracket_order(
     pseudo_account: str,
     organization_id: str,
     exchange: Exchange,
-    symbol: str,
+    instrument_key: str,  # AutoTrader symbol format
     tradeType: TradeType,
     orderType: OrderType,
     quantity: int,
@@ -131,14 +164,13 @@ async def place_bracket_order(
     db: Session = Depends(get_db),
     trailingStoploss: Optional[float] = 0.0,
     strategy_id: Optional[str] = None, 
-
 ):
     try:
         trade_service = TradeService(db)
         return await trade_service.place_bracket_order(
             pseudo_account,
             exchange.value,
-            symbol,
+            instrument_key,  # Pass AutoTrader symbol format directly
             tradeType.value,
             orderType.value,
             quantity,
@@ -158,7 +190,8 @@ async def place_bracket_order(
 async def place_advanced_order(
     order: AdvancedOrder,
     organization_id: str,
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -166,7 +199,7 @@ async def place_advanced_order(
         order.variety.value,
         order.pseudo_account,
         order.exchange.value,
-        order.symbol,
+        order.instrument_key,  # This is AutoTrader symbol format from the schema
         order.tradeType.value,
         order.orderType.value,
         order.productType.value,
@@ -193,7 +226,8 @@ async def cancel_order(
     pseudo_account: str,
     platform_id: str,
     organization_id: str,
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -208,7 +242,8 @@ async def cancel_child_orders(
     pseudo_account: str,
     platform_id: str,
     organization_id: str,
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -223,7 +258,8 @@ async def modify_order(
     platform_id: str,
     order: ModifyOrder,
     organization_id: str,
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -246,9 +282,10 @@ async def square_off_position(
     position_category: str,
     position_type: str,
     exchange: str,
-    symbol: str,
+    instrument_key: str,  # AutoTrader symbol format
     organization_id: str,
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -257,7 +294,7 @@ async def square_off_position(
             position_category,
             position_type,
             exchange,
-            symbol,
+            instrument_key,  # Pass AutoTrader symbol format directly
             organization_id,
             background_tasks,
         )
@@ -266,11 +303,11 @@ async def square_off_position(
 
 @router.post("/square_off_portfolio")
 async def square_off_portfolio(
-
     pseudo_account: str,
     position_category: str,
     organization_id: str,
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -284,7 +321,8 @@ async def square_off_portfolio(
 async def cancel_all_orders(
     pseudo_account: str,
     organization_id: str,
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
 ):
     try:
         trade_service = TradeService(db)
@@ -349,4 +387,3 @@ async def get_holdings_by_strategy(strategy_name: str, db: Session = Depends(get
         return await trade_service.get_holdings_by_strategy(strategy_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    

@@ -1,0 +1,121 @@
+# Temporary files and logs
+*.log
+*.tmp
+*.temp
+test.log
+startup.log
+margin_debug.log
+trade_service.log
+trade_service_tests.log
+
+# Backup files
+*.backup
+*_backup*
+backup_archive/
+
+# Test results and data files
+test_results_*.log
+test_results_*.json
+real_api_results_*.json
+real_autotrader_data_*.json
+complete_account_data_*.json
+
+# Shell scripts and temporary scripts
+*.sh
+bypass_user_service_for_api_key.sh
+add_missing_columns.sh
+comprehensive_enum_fix.sh
+comprehensive_order_test.sh
+comprehensive_order_test_fixed.sh
+comprehensive_test_plan.sh
+diagnose_and_fix_crashes.sh
+diagnostic_trade_service_fix.sh
+final_async_fix.sh
+final_comprehensive_fix.sh
+find_and_fix_enums.sh
+fix_*.sh
+minimal_rate_limiter_fix.sh
+order_monitor.sh
+quick_fix.sh
+redis_monitor.sh
+restore_main_py_completely.sh
+run_tests.sh
+setup_*.sh
+simple_endpoint_test.sh
+start_trade_service_script.sh
+test_*.sh
+
+# Python debug and test files
+check_*.py
+comprehensive_*.py
+debug_*.py
+diagnose_*.py
+direct_api_test.py
+discovery_script.py
+explore_redis_data.py
+fetch_all_users_data.py
+fix_*.py
+live_test*.py
+manual_*.py
+monitor_service.py
+order_validation_test.py
+patch_*.py
+quick_*.py
+real_*.py
+redis_debug.py
+run_*.py
+setup_*.py
+simple_*.py
+start_service.py
+test_*.py
+working_*.py
+
+# Version conflict indicators
+=0.24.0
+=5.3.0
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Logs directory
+logs/
+
+# Documentation that appears to be temporary
+CHANGELOG.md
+COMPLETE_DATA_FETCHING_GUIDE.md
+ENHANCED_FEATURES.md
+LIVE_TESTING_GUIDE.md
+PHASE1_INTEGRATION_GUIDE.md
+PHASE3_MONITORING_GUIDE.md
+PRACTICAL_TESTING_GUIDE.md
+REAL_DATA_SOLUTION.md
+RUN_AND_SEE_RESULTS.md
+STRATEGY_USAGE.md
+TESTING_EXECUTION_PLAN.md
+TESTING_GUIDE.md
+
+# Duplicate directories
+trade_service/
+shared_architecture/shared_architecture/
+
+# OS files
+.DS_Store
+Thumbs.db

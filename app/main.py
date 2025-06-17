@@ -1,6 +1,9 @@
 import sys
 import os
 import asyncio
+import time
+from fastapi import HTTPException, Response
+import json
 
 # Ensure the parent folder (trade_service/) is in the PYTHONPATH
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -12,45 +15,56 @@ from shared_architecture.utils.logging_utils import log_info, log_exception
 
 # Imports for your specific microservice components
 from app.api.endpoints import trade_endpoints # Your API routes
+from app.api.endpoints import ledger_endpoints
+# from app.api.endpoints import redis_data_endpoints # Redis data API - temporarily disabled
+from app.api.endpoints import management_endpoints # Management and monitoring
+# from app.api.endpoints import strategy_retagging_endpoints # Strategy retagging - temporarily disabled
 from app.context.global_app import set_app # For global app state
 from app.core.config import settings as tradeServiceSettings # Your custom settings class
 
-# Imports for database model discovery
-# You need to import at least one Base from your local models
-# All your models (OrderModel, PositionModel, etc.) should inherit from the same declarative_base()
-# So, importing one alias (e.g., OrderModelBase) is sufficient for metadata.create_all()
-from app.models.order_model import Base as OrderModelBase
-# It's good practice to ensure all other models are also imported
-# to ensure their metadata is registered if they are not explicitly imported elsewhere.
-from app.models.position_model import PositionModel
-from app.models.holding_model import HoldingModel
-from app.models.margin_model import MarginModel
-from app.models.order_event_model import OrderEventModel
-
 # Import your Celery tasks module to ensure tasks are registered for auto-discovery
-# Even though celery_app.autodiscover_tasks handles finding them, importing the module
-# ensures it's loaded by the main app process.
-# Import individual task files
 from app.tasks import create_order_event
 from app.tasks import get_api_key_task
 from app.tasks import process_order_task
 from app.tasks import update_order_status
 from app.tasks import update_positions_and_holdings_task
 
+# Database models and table creation
+from shared_architecture.db.models.holding_model import Base as HoldingBase
+from shared_architecture.db.models.position_model import Base as PositionBase
+from shared_architecture.db.models.order_model import Base as OrderBase
+from shared_architecture.db.models.margin_model import Base as MarginBase
+from shared_architecture.db.models.order_event_model import Base as OrderEventBase
+from shared_architecture.db.session import sync_engine
 
-# Start the service - This function from shared_architecture now handles:
-#   - FastAPI app creation
-#   - Initial logging setup
-#   - Connection management (TimescaleDB, Redis, RabbitMQ) and populating app.state.connections
-#   - Configuration loading (potentially into app.state.config)
+# Create tables (you might want to move this to a migration script)
+try:
+    HoldingBase.metadata.create_all(bind=sync_engine)
+    PositionBase.metadata.create_all(bind=sync_engine)
+    OrderBase.metadata.create_all(bind=sync_engine)
+    MarginBase.metadata.create_all(bind=sync_engine)
+    OrderEventBase.metadata.create_all(bind=sync_engine)
+    log_info("✅ Database tables created/verified")
+except Exception as e:
+    log_exception(f"❌ Failed to create database tables: {e}")
+
+# Start the service with new service discovery system
 app: FastAPI = start_service("trade_service")
 set_app(app) # Set the app globally if needed by other parts of your shared architecture
+
+# Include your API routers
+app.include_router(trade_endpoints.router, prefix="/trades", tags=["trades"])
+app.include_router(ledger_endpoints.router, prefix="/ledger", tags=["ledger"])
+# app.include_router(redis_data_endpoints.router, prefix="/data", tags=["redis_data"]) # temporarily disabled
+app.include_router(management_endpoints.router, prefix="/management", tags=["management"])
+# app.include_router(strategy_retagging_endpoints.router, prefix="/strategies", tags=["strategy_retagging"]) # temporarily disabled
+
 
 @app.on_event("startup")
 async def custom_startup():
     """
     Custom startup logic for trade service - runs after shared_architecture's infrastructure setup.
-    This is where we ensure database tables are created.
+    Updated to work with new service discovery system.
     """
     log_info("🚀 trade_service custom startup logic started.")
     
@@ -60,67 +74,69 @@ async def custom_startup():
     waited = 0
     
     while waited < max_wait:
-        # Check for TimescaleDB session factory availability
-        if hasattr(app.state, 'connections') and app.state.connections.get("timescaledb"):
-            log_info("Infrastructure is ready, proceeding with service initialization")
+        # Check for connection manager initialization
+        if (hasattr(app.state, 'connection_manager') and 
+            hasattr(app.state, 'connections') and 
+            app.state.connections.get("timescaledb")):
+            log_info("✅ Infrastructure is ready, proceeding with service initialization")
             break
-        log_info(f"Waiting for infrastructure... ({waited}s/{max_wait}s)")
+        log_info(f"⏳ Waiting for infrastructure... ({waited}s/{max_wait}s)")
         await asyncio.sleep(wait_interval)
         waited += wait_interval
     else:
-        log_exception("❌ Infrastructure startup timeout - TimescaleDB connection not ready.")
+        log_exception("❌ Infrastructure startup timeout - connections not ready.")
         raise Exception("Infrastructure startup timeout - connections not ready")
     
-    # 2. Load microservice-specific settings (if not already handled by start_service)
-    # This block assumes tradeServiceSettings.from_config() loads from a specific source
-    # independent of app.state.config populated by start_service.
-    # If app.state.config already contains all settings, you might simplify this.
+    # 2. Load microservice-specific settings
     max_retries = 3
     retry_delay = 2
     
     for attempt in range(max_retries):
         try:
-            log_info(f"Loading tradeServiceSettings config attempt {attempt + 1}/{max_retries}")
-            settings_instance = tradeServiceSettings.from_config()
-            app.state.settings = settings_instance # Attach custom settings to app state
-            log_info("Trade service settings loaded successfully.")
+            log_info(f"📝 Loading trade service settings attempt {attempt + 1}/{max_retries}")
+            
+            # Use the settings instance directly (simplified approach)
+            app.state.settings = tradeServiceSettings
+            log_info("✅ Trade service settings loaded successfully.")
 
             # Get session factory with validation
             session_factory = app.state.connections.get("timescaledb")
             if not session_factory:
                 raise Exception("TimescaleDB session factory not available in app.state.connections.")
             
-            log_info(f"Database operation attempt {attempt + 1}/{max_retries}")
+            log_info(f"🔍 Database verification attempt {attempt + 1}/{max_retries}")
             
-            # Create session and execute with proper connection handling
+            # Test database connection
             async with session_factory() as session:
-                # 3. Verify database connection is alive
                 try:
                     result = await session.execute(text("SELECT 1 as test"))
                     test_row = result.fetchone()
-                    log_info(f"Database connection test successful: {test_row[0]}")
+                    log_info(f"✅ Database connection test successful: {test_row[0]}")
                 except Exception as conn_test_error:
-                    log_exception(f"Database connection test failed: {conn_test_error}")
+                    log_exception(f"❌ Database connection test failed: {conn_test_error}")
                     raise # Re-raise to trigger retry logic
                 
-                # 4. Create database tables
+                # Database is working, continue with service-specific initialization
+                log_info("📊 Performing service-specific database checks...")
+                
+                # Example: Check if required tables exist
                 try:
-                    # Get the SQLAlchemy engine from the session's bind
-                    engine = session.bind
-                    # Create all tables defined in your models if they don't exist
-                    # OrderModelBase.metadata.create_all() will discover all models inheriting from that Base.
-                    log_info("Checking and creating database tables...")
-                    OrderModelBase.metadata.create_all(bind=engine)
-                    log_info("Database tables checked/created successfully.")
-                    break # Success, exit retry loop
+                    tables_check = await session.execute(text("""
+                        SELECT table_name 
+                        FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name IN ('orders', 'positions', 'holdings', 'margins')
+                    """))
+                    existing_tables = [row[0] for row in tables_check.fetchall()]
+                    log_info(f"📋 Found existing tables: {existing_tables}")
+                except Exception as table_check_error:
+                    log_exception(f"⚠️  Table check failed: {table_check_error}")
+                
+                break # Success, exit retry loop
                     
-                except Exception as table_creation_error:
-                    log_exception(f"Error during database table creation: {table_creation_error}")
-                    raise # Re-raise to trigger retry logic
-        
         except Exception as e:
             if attempt < max_retries - 1:
-                log_exception(f"Startup attempt {attempt + 1} failed, retrying in {retry_delay}s: {e}")
+                log_exception(f"❌ Startup attempt {attempt + 1} failed, retrying in {retry_delay}s: {e}")
                 await asyncio.sleep(retry_delay)
                 retry_delay *= 1.5 # Gradual backoff
                 continue
@@ -128,98 +144,137 @@ async def custom_startup():
                 log_exception(f"❌ trade_service initialization failed after {max_retries} attempts: {e}")
                 raise
 
-    # 5. Initialize symbols (separate from database operations)
+    # 3. Service health check and logging
     try:
-        log_info("Initializing symbol service by refreshing symbols...")
+        health_status = await app.state.connection_manager.health_check()
+        healthy_services = [k for k, v in health_status.items() if v["status"] == "healthy"]
+        degraded_services = [k for k, v in health_status.items() if v["status"] == "unavailable"]
+        
+        log_info(f"🟢 Healthy services: {healthy_services}")
+        if degraded_services:
+            log_info(f"🟡 Unavailable services (graceful degradation): {degraded_services}")
+            
     except Exception as e:
-        log_exception(f"❌ Symbol service initialization failed: {e}")
+        log_exception(f"❌ Health check failed: {e}")
+
+    # 4. Initialize service-specific components
+    try:
+        log_info("🔧 Initializing trade service components...")
+        
+        # Initialize any service-specific managers, caches, etc.
+        # Example: symbol service, rate limiters, etc.
+        
+        log_info("✅ Trade service components initialized")
+    except Exception as e:
+        log_exception(f"❌ Component initialization failed: {e}")
         # Depending on criticality, you might raise here to prevent startup
-        # raise # Uncomment this if symbol service failure should halt startup
 
     log_info("✅ trade_service custom startup complete.")
 
 
-# Include your API router
-app.include_router(trade_endpoints.router, prefix="/trades", tags=["trades"])
-
-# Health Check Endpoint
 @app.get("/health")
 async def health_check():
     """
-    Comprehensive health check endpoint for the Trade Service.
-    Checks underlying connections and service-specific components.
+    Comprehensive health check endpoint using the new connection manager.
     """
-    health_status = {"status": "healthy", "components": {}}
-    
-    # Check TimescaleDB connection
     try:
-        session_factory = app.state.connections.get("timescaledb")
-        if session_factory:
-            async with session_factory() as session:
-                await session.execute(text("SELECT 1"))
-                health_status["components"]["timescaledb"] = {"status": "ok"}
-        else:
-            health_status["components"]["timescaledb"] = {"status": "degraded", "message": "Session factory not available"}
-            health_status["status"] = "degraded"
-    except Exception as e:
-        health_status["components"]["timescaledb"] = {"status": "unhealthy", "message": str(e)}
-        health_status["status"] = "unhealthy"
+        # Get health status from connection manager
+        connection_health = await app.state.connection_manager.health_check()
+        
+        # Determine overall status
+        overall_status = "healthy"
+        for service, status in connection_health.items():
+            if status["status"] == "unhealthy":
+                overall_status = "unhealthy"
+                break
+            elif status["status"] == "unavailable" and overall_status != "unhealthy":
+                overall_status = "degraded"
+        
+        # Add service-specific health checks
+        health_status = {
+            "overall_status": overall_status,
+            "service": "trade_service",
+            "connections": connection_health,
+            "custom_checks": {}
+        }
+        
+        # Add custom microservice health checks
+        try:
+            if hasattr(app.state, 'market_data_manager'):
+                health_status["custom_checks"]["market_data_manager"] = await app.state.market_data_manager.health_check()
+        except Exception as e:
+            health_status["custom_checks"]["market_data_manager"] = {"status": "unhealthy", "message": str(e)}
+            if overall_status == "healthy":
+                overall_status = "degraded"
 
-    # Check Redis connection
+        # Update overall status based on custom checks
+        health_status["overall_status"] = overall_status
+
+        # Return appropriate HTTP status code
+        if overall_status == "unhealthy":
+            raise HTTPException(status_code=500, detail=health_status)
+        elif overall_status == "degraded":
+            return Response(
+                content=json.dumps(health_status),
+                status_code=503,
+                media_type="application/json"
+            )
+
+        return health_status
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        log_exception(f"❌ Health check failed: {e}")
+        error_response = {
+            "overall_status": "error",
+            "service": "trade_service", 
+            "message": str(e)
+        }
+        raise HTTPException(status_code=500, detail=error_response)
+
+
+@app.get("/health/detailed")
+async def detailed_health_check():
+    """
+    Detailed health check with more information about service discovery
+    """
     try:
-        redis_conn = app.state.connections.get("redis")
-        if redis_conn:
-            await redis_conn.ping() # Redis ping is an async operation in modern redis-py
-            health_status["components"]["redis"] = {"status": "ok"}
-        else:
-            health_status["components"]["redis"] = {"status": "degraded", "message": "Redis connection not available"}
-            health_status["status"] = "degraded"
+        from shared_architecture.connections.service_discovery import service_discovery,ServiceType
+        
+        connection_health = await app.state.connection_manager.health_check()
+        
+        detailed_health = {
+            "service": "trade_service",
+            "environment": service_discovery.environment.value,
+            "connections": connection_health,
+            "service_discovery": {
+                "redis": service_discovery.get_connection_info("redis", ServiceType.REDIS),
+                "timescaledb": service_discovery.get_connection_info("timescaledb", ServiceType.TIMESCALEDB),
+                "rabbitmq": service_discovery.get_connection_info("rabbitmq", ServiceType.RABBITMQ),
+                "mongodb": service_discovery.get_connection_info("mongo", ServiceType.MONGODB),
+            }
+        }
+        
+        return detailed_health
+        
     except Exception as e:
-        health_status["components"]["redis"] = {"status": "unhealthy", "message": str(e)}
-        health_status["status"] = "unhealthy"
-
-    # Check RabbitMQ connection (assuming it's available via app.state.connections)
-    try:
-        rabbitmq_conn_producer = app.state.connections.get("rabbitmq_producer") # Or however you store it
-        if rabbitmq_conn_producer:
-            # A simple way to check if pika connection is alive (requires a more robust check)
-            # This might involve checking the underlying socket. For simplicity, just check existence.
-            health_status["components"]["rabbitmq"] = {"status": "ok"}
-        else:
-            health_status["components"]["rabbitmq"] = {"status": "degraded", "message": "RabbitMQ connection not available"}
-            health_status["status"] = "degraded"
-    except Exception as e:
-        health_status["components"]["rabbitmq"] = {"status": "unhealthy", "message": str(e)}
-        health_status["status"] = "unhealthy"
-
-    # Add custom microservice health checks here (as in your original file)
-    # Example: Check internal data consistency, background task queue depth etc.
-    redis_health_from_manager = {"status": "unknown"}
-    try:
-        if hasattr(app.state, 'market_data_manager'):
-            redis_health_from_manager = await app.state.market_data_manager.health_check()
-        health_status["components"]["market_data_manager"] = redis_health_from_manager
-    except Exception as e:
-        health_status["components"]["market_data_manager"] = {"status": "unhealthy", "message": str(e)}
-        if health_status["status"] == "healthy": health_status["status"] = "degraded"
+        log_exception(f"❌ Detailed health check failed: {e}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-    # Determine overall HTTP status code
-    http_status_code = 200
-    if health_status["status"] == "unhealthy":
-        http_status_code = 500
-    elif health_status["status"] == "degraded":
-        http_status_code = 503
-    
-    return health_status, http_status_code # Return tuple for status and HTTP code
-
-
-# Request Logging Middleware (as provided by you)
+# Request Logging Middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    # You might want to add actual logging here, e.g., using log_info
+    start_time = time.time()
     response = await call_next(request)
+    process_time = time.time() - start_time
+    
+    # Log request details (you can customize this)
+    log_info(f"📥 {request.method} {request.url.path} - {response.status_code} - {process_time:.3f}s")
+    
     return response
+
 
 # Shutdown Event
 @app.on_event("shutdown")
@@ -227,56 +282,71 @@ async def shutdown_event():
     """
     Handles shutdown events: gracefully stops the service and closes connections.
     """
-    log_info("Trade Service shutting down...")
-    # This stop_service from shared_architecture.utils.service_utils is assumed to handle
-    # closing of connections via connection_manager.close_all_connections()
-    await stop_service("trade_service") # Pass service name to stop_service
-    log_info("Trade Service shutdown complete.")
+    log_info("🛑 Trade Service shutting down...")
+    try:
+        await stop_service("trade_service")
+        log_info("✅ Trade Service shutdown complete.")
+    except Exception as e:
+        log_exception(f"❌ Error during shutdown: {e}")
+
 
 # Main Runner (for local development or explicit run)
-# This block handles direct execution of the uvicorn server with retry logic.
 def run_uvicorn():
     import uvicorn
-    log_info("Starting uvicorn server on 0.0.0.0:8000")
+    log_info("🚀 Starting uvicorn server on 0.0.0.0:8004")
     uvicorn.run(
-        app="app.main:app", # Refer to the app in the current module
+        app="app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8004,
         reload=False,  # Disabled for container compatibility and production
         access_log=True,
         log_level="info"
     )
 
-# Optional control via environment (as in your original file)
-# This conditional block determines if uvicorn should be run directly from this script.
-try:
-    # Assuming app.state.config is populated by start_service
-    # And "private" key exists and contains "RUN_UVICORN"
-    should_run_uvicorn = app.state.config.get("private", {}).get("RUN_UVICORN", False)
-    if should_run_uvicorn:
-        log_info('RUN_UVICORN is true. Starting uvicorn...')
-        # Retry loop for uvicorn startup (as in your original __main__ block)
-        max_retries = 3
-        retry_delay = 5 # seconds
-        for attempt in range(max_retries):
-            try:
-                log_info(f"🔁 Attempt {attempt + 1} to start trade_service via uvicorn...")
-                run_uvicorn() # Call the wrapper function
-                break # Success
-            except Exception as e:
-                log_exception(f"❌ Uvicorn failed to start on attempt {attempt + 1}: {e}")
-                if attempt < max_retries - 1:
-                    log_info(f"⏳ Waiting {retry_delay} seconds before retry...")
-                    asyncio.run(asyncio.sleep(retry_delay)) # Use asyncio.run for sleep outside async func
-                    retry_delay *= 1.5 # Gradual backoff
-                else:
-                    log_info("❌ All uvicorn startup attempts failed.")
-    else:
-        log_info('RUN_UVICORN is false. trade_service ready but uvicorn not started by this script (expecting external server, e.g., Gunicorn).')
-except (KeyError, AttributeError, TypeError) as e:
-    log_info(f'RUN_UVICORN configuration not found or invalid: {e}. trade_service ready for external server.')
 
-
-# The `if __name__ == "__main__":` block is now largely handled by the `try-except` block above.
-# The original `if __name__ == "__main__":` block was effectively duplicated.
-# This makes the script more self-contained for starting the uvicorn server based on config.
+# MINIMAL FIX: Only run uvicorn startup logic when NOT being imported by uvicorn
+if __name__ == "__main__":
+    try:
+        # Check if we should start uvicorn based on config
+        should_run_uvicorn = app.state.config.get("private", {}).get("RUN_UVICORN", False)
+        if should_run_uvicorn:
+            log_info('🎯 RUN_UVICORN is true. Starting uvicorn...')
+            # Retry loop for uvicorn startup
+            max_retries = 3
+            retry_delay = 5
+            for attempt in range(max_retries):
+                try:
+                    log_info(f"🔁 Attempt {attempt + 1} to start trade_service via uvicorn...")
+                    run_uvicorn()
+                    break
+                except Exception as e:
+                    log_exception(f"❌ Uvicorn failed to start on attempt {attempt + 1}: {e}")
+                    if attempt < max_retries - 1:
+                        log_info(f"⏳ Waiting {retry_delay} seconds before retry...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5
+                    else:
+                        log_info("❌ All uvicorn startup attempts failed.")
+        else:
+            log_info('🎯 RUN_UVICORN is false or not set. Starting uvicorn directly...')
+            import uvicorn
+            uvicorn.run(
+                "app.main:app",
+                host="0.0.0.0", 
+                port=8004,
+                reload=True,
+                log_level="info"
+            )
+    except (KeyError, AttributeError, TypeError) as e:
+        log_info(f'⚙️  Config not available, starting uvicorn with defaults: {e}')
+        import uvicorn
+        uvicorn.run(
+            "app.main:app",
+            host="0.0.0.0", 
+            port=8004,
+            reload=True,
+            log_level="info"
+        )
+else:
+    # When imported by uvicorn (production), just log that we're ready
+    log_info('✅ Trade service app created and ready for uvicorn startup.')

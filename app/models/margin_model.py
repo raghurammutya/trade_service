@@ -28,4 +28,6 @@ class MarginModel(Base):
     active = Column(Boolean, default=True)
     margin_date = Column(DateTime)
     instrument_key = Column(String, ForeignKey('symbols.instrument_key'))
+    strategy_id = Column(String)
+    source_strategy_id = Column(String, nullable=True)
     __table_args__ = (UniqueConstraint('pseudo_account', 'category', 'margin_date'),)
