@@ -1,0 +1,998 @@
+{
+	"info": {
+		"name": "Trade Service API - Complete Collection",
+		"description": "Comprehensive API collection for testing Trade Service endpoints with sample data",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"version": "1.0.0"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "organization_id",
+			"value": "ORG001",
+			"type": "string"
+		},
+		{
+			"key": "pseudo_account",
+			"value": "XJ4540",
+			"type": "string"
+		},
+		{
+			"key": "strategy_id",
+			"value": "strategy-123",
+			"type": "string"
+		},
+		{
+			"key": "platform_id",
+			"value": "order-123",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Health & Status",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						}
+					}
+				},
+				{
+					"name": "System Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/system/status",
+							"host": ["{{base_url}}"],
+							"path": ["system", "status"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Redis Data Endpoints",
+			"item": [
+				{
+					"name": "Get All Orders",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/data/orders?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["data", "orders"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get All Positions",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/data/positions?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["data", "positions"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get All Holdings",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/data/holdings?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["data", "holdings"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get All Margins",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/data/margins?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["data", "margins"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Trade Operations",
+			"item": [
+				{
+					"name": "Fetch All Trading Users",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/fetch_all_users?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "fetch_all_users"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Fetch and Store Account Data",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/fetch_and_store/{{pseudo_account}}?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "fetch_and_store", "{{pseudo_account}}"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Place Regular Order - Equity",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"organization_id\": \"{{organization_id}}\",\n    \"exchange\": \"NSE\",\n    \"instrument_key\": \"NSE@RELIANCE@equities\",\n    \"tradeType\": \"BUY\",\n    \"orderType\": \"LIMIT\",\n    \"productType\": \"DELIVERY\",\n    \"quantity\": 1,\n    \"price\": 2500.0,\n    \"triggerPrice\": 0.0,\n    \"strategy_id\": \"{{strategy_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/trade/regular_order",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "regular_order"]
+						}
+					}
+				},
+				{
+					"name": "Place Regular Order - Options",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"organization_id\": \"{{organization_id}}\",\n    \"exchange\": \"NSE\",\n    \"instrument_key\": \"NSE@NIFTY@options@20-Jun-2024@call@23300\",\n    \"tradeType\": \"BUY\",\n    \"orderType\": \"LIMIT\",\n    \"productType\": \"INTRADAY\",\n    \"quantity\": 25,\n    \"price\": 150.0,\n    \"triggerPrice\": 0.0,\n    \"strategy_id\": \"{{strategy_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/trade/regular_order",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "regular_order"]
+						}
+					}
+				},
+				{
+					"name": "Place Advanced Order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"variety\": \"REGULAR\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"exchange\": \"NSE\",\n    \"instrument_key\": \"NSE@RELIANCE@equities\",\n    \"tradeType\": \"BUY\",\n    \"orderType\": \"LIMIT\",\n    \"productType\": \"DELIVERY\",\n    \"quantity\": 1,\n    \"price\": 2500.0,\n    \"triggerPrice\": 0.0,\n    \"target\": 0.0,\n    \"stoploss\": 0.0,\n    \"trailingStoploss\": 0.0,\n    \"disclosedQuantity\": 0,\n    \"validity\": \"DAY\",\n    \"amo\": true,\n    \"strategyId\": \"{{strategy_id}}\",\n    \"comments\": \"Test order from Postman\",\n    \"publisherId\": \"postman-test\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/trade/advanced_order?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "advanced_order"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Place Bracket Order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"organization_id\": \"{{organization_id}}\",\n    \"exchange\": \"NSE\",\n    \"instrument_key\": \"NSE@RELIANCE@equities\",\n    \"tradeType\": \"BUY\",\n    \"orderType\": \"LIMIT\",\n    \"quantity\": 1,\n    \"price\": 2500.0,\n    \"triggerPrice\": 2450.0,\n    \"target\": 2600.0,\n    \"stoploss\": 2400.0,\n    \"trailingStoploss\": 0.0,\n    \"strategy_id\": \"{{strategy_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/trade/bracket_order",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "bracket_order"]
+						}
+					}
+				},
+				{
+					"name": "Modify Order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"order_type\": \"LIMIT\",\n    \"quantity\": 2,\n    \"price\": 2510.0,\n    \"trigger_price\": 0.0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/trade/modify_order/{{platform_id}}?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "modify_order", "{{platform_id}}"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Cancel Order",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/cancel_order/{{platform_id}}?pseudo_account={{pseudo_account}}&organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "cancel_order", "{{platform_id}}"],
+							"query": [
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								},
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Cancel All Orders",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/cancel_all_orders?pseudo_account={{pseudo_account}}&organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "cancel_all_orders"],
+							"query": [
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								},
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Square Off Position",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/square_off_position?pseudo_account={{pseudo_account}}&position_category=equity&position_type=long&exchange=NSE&instrument_key=NSE@RELIANCE@equities&organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "square_off_position"],
+							"query": [
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								},
+								{
+									"key": "position_category",
+									"value": "equity"
+								},
+								{
+									"key": "position_type",
+									"value": "long"
+								},
+								{
+									"key": "exchange",
+									"value": "NSE"
+								},
+								{
+									"key": "instrument_key",
+									"value": "NSE@RELIANCE@equities"
+								},
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Square Off Portfolio",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/square_off_portfolio?pseudo_account={{pseudo_account}}&position_category=equity&organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "square_off_portfolio"],
+							"query": [
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								},
+								{
+									"key": "position_category",
+									"value": "equity"
+								},
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Strategy Management",
+			"item": [
+				{
+					"name": "Create Strategy",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"NIFTY Options Straddle\",\n    \"description\": \"Long straddle on NIFTY options for volatility play\",\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"created_by\": \"trader1\",\n    \"tags\": [\"options\", \"volatility\", \"nifty\"],\n    \"max_loss\": 10000.0,\n    \"max_profit\": null,\n    \"target_profit\": 5000.0,\n    \"stop_loss\": 8000.0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/strategy/create",
+							"host": ["{{base_url}}"],
+							"path": ["strategy", "create"]
+						}
+					}
+				},
+				{
+					"name": "List All Strategies",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/strategy/list?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["strategy", "list"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Strategy Details",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/strategy/{{strategy_id}}/details?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["strategy", "{{strategy_id}}", "details"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Tag Positions to Strategy",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"position_tags\": [\n        {\n            \"instrument_key\": \"NSE@NIFTY@options@20-Jun-2024@call@23300\",\n            \"quantity\": 25,\n            \"allocated_price\": 150.0\n        },\n        {\n            \"instrument_key\": \"NSE@NIFTY@options@20-Jun-2024@put@23300\",\n            \"quantity\": 25,\n            \"allocated_price\": 140.0\n        }\n    ],\n    \"order_tags\": [],\n    \"holding_tags\": []\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/strategy/{{strategy_id}}/tag?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["strategy", "{{strategy_id}}", "tag"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Square Off Strategy",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"square_off_type\": \"PARTIAL\",\n    \"percentage\": 50.0,\n    \"reason\": \"Taking partial profits\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/strategy/{{strategy_id}}/square-off?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["strategy", "{{strategy_id}}", "square-off"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Update Strategy Status",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"status\": \"ACTIVE\",\n    \"reason\": \"Strategy setup complete, activating for trading\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/strategy/{{strategy_id}}/status?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["strategy", "{{strategy_id}}", "status"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Ledger Management",
+			"item": [
+				{
+					"name": "Upload Ledger File",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"file_path\": \"/home/stocksadmin/stocksblitz/files/ledger-XJ4540.xlsx\",\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/ledger/upload",
+							"host": ["{{base_url}}"],
+							"path": ["ledger", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Get Ledger Entries",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/ledger/entries?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}&limit=50",
+							"host": ["{{base_url}}"],
+							"path": ["ledger", "entries"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								},
+								{
+									"key": "limit",
+									"value": "50"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Historical Import",
+			"item": [
+				{
+					"name": "Import Historical Tradebook",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"file_path\": \"/home/stocksadmin/stocksblitz/files/tradebook-XJ4540-EQ.xlsx\",\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"trade_date\": \"2024-01-15\",\n    \"product_type\": \"EQ\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/historical/import-tradebook",
+							"host": ["{{base_url}}"],
+							"path": ["historical", "import-tradebook"]
+						}
+					}
+				},
+				{
+					"name": "Import All Historical Files",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"files_directory\": \"/home/stocksadmin/stocksblitz/files\",\n    \"auto_detect_product_type\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/historical/import-all",
+							"host": ["{{base_url}}"],
+							"path": ["historical", "import-all"]
+						}
+					}
+				},
+				{
+					"name": "Get Import Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/historical/import-status?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["historical", "import-status"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Position Generation",
+			"item": [
+				{
+					"name": "Generate Positions from Orders",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"target_date\": \"2024-06-17\",\n    \"include_intraday\": true,\n    \"force_regeneration\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/generate/positions",
+							"host": ["{{base_url}}"],
+							"path": ["generate", "positions"]
+						}
+					}
+				},
+				{
+					"name": "Generate Holdings from Positions",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"target_date\": \"2024-06-17\",\n    \"convert_delivery_only\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/generate/holdings",
+							"host": ["{{base_url}}"],
+							"path": ["generate", "holdings"]
+						}
+					}
+				},
+				{
+					"name": "Comprehensive Position Generation",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"target_date\": \"2024-06-17\",\n    \"include_intraday\": true,\n    \"generate_holdings\": true,\n    \"force_regeneration\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/generate/comprehensive",
+							"host": ["{{base_url}}"],
+							"path": ["generate", "comprehensive"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "External Order Detection",
+			"item": [
+				{
+					"name": "Detect External Orders",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"organization_id\": \"{{organization_id}}\",\n    \"pseudo_account\": \"{{pseudo_account}}\",\n    \"check_date\": \"2024-06-17\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/external/detect-orders",
+							"host": ["{{base_url}}"],
+							"path": ["external", "detect-orders"]
+						}
+					}
+				},
+				{
+					"name": "Get External Order Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/external/detection-status?organization_id={{organization_id}}&pseudo_account={{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["external", "detection-status"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								},
+								{
+									"key": "pseudo_account",
+									"value": "{{pseudo_account}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Query Endpoints",
+			"item": [
+				{
+					"name": "Get Orders by Organization and User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/orders/organization/{{organization_id}}/user/{{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "orders", "organization", "{{organization_id}}", "user", "{{pseudo_account}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Positions by Organization and User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/positions/organization/{{organization_id}}/user/{{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "positions", "organization", "{{organization_id}}", "user", "{{pseudo_account}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Holdings by Organization and User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/holdings/organization/{{organization_id}}/user/{{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "holdings", "organization", "{{organization_id}}", "user", "{{pseudo_account}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Margins by Organization and User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/margins/organization/{{organization_id}}/user/{{pseudo_account}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "margins", "organization", "{{organization_id}}", "user", "{{pseudo_account}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Orders by Strategy",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/orders/strategy/{{strategy_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "orders", "strategy", "{{strategy_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Positions by Strategy",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/positions/strategy/{{strategy_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "positions", "strategy", "{{strategy_id}}"]
+						}
+					}
+				},
+				{
+					"name": "Get Holdings by Strategy",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/holdings/strategy/{{strategy_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "holdings", "strategy", "{{strategy_id}}"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Infrastructure & Testing",
+			"item": [
+				{
+					"name": "Test Redis Connection",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/data/test-redis",
+							"host": ["{{base_url}}"],
+							"path": ["data", "test-redis"]
+						}
+					}
+				},
+				{
+					"name": "Infrastructure Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/system/infrastructure-health",
+							"host": ["{{base_url}}"],
+							"path": ["system", "infrastructure-health"]
+						}
+					}
+				},
+				{
+					"name": "Get Trade Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/status/{{platform_id}}?organization_id={{organization_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "status", "{{platform_id}}"],
+							"query": [
+								{
+									"key": "organization_id",
+									"value": "{{organization_id}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Set dynamic values",
+					"pm.collectionVariables.set('timestamp', new Date().toISOString());",
+					"",
+					"// Generate random order ID for testing",
+					"const randomOrderId = 'order-' + Math.random().toString(36).substr(2, 9);",
+					"pm.collectionVariables.set('platform_id', randomOrderId);",
+					"",
+					"// Generate random strategy ID",
+					"const randomStrategyId = 'strategy-' + Math.random().toString(36).substr(2, 9);",
+					"pm.collectionVariables.set('strategy_id', randomStrategyId);"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Basic test for all requests",
+					"pm.test('Status code is success', function () {",
+					"    pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]);",
+					"});",
+					"",
+					"// Log response for debugging",
+					"console.log('Response Status:', pm.response.status);",
+					"console.log('Response Body:', pm.response.text());",
+					"",
+					"// Extract and store IDs from responses",
+					"if (pm.response.json && pm.response.json()) {",
+					"    const responseJson = pm.response.json();",
+					"    ",
+					"    // Store order ID if present",
+					"    if (responseJson.order_id) {",
+					"        pm.collectionVariables.set('platform_id', responseJson.order_id);",
+					"        console.log('Stored order_id:', responseJson.order_id);",
+					"    }",
+					"    ",
+					"    // Store strategy ID if present",
+					"    if (responseJson.strategy_id) {",
+					"        pm.collectionVariables.set('strategy_id', responseJson.strategy_id);",
+					"        console.log('Stored strategy_id:', responseJson.strategy_id);",
+					"    }",
+					"}"
+				]
+			}
+		}
+	]
+}

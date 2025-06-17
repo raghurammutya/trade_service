@@ -1,6 +1,17 @@
 # trade_service/app/core/celery_config.py
 from celery import Celery
 import os
+import sys
+
+# Add parent directory to path to import shared_architecture
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+try:
+    from shared_architecture.connections.service_discovery import service_discovery, ServiceType
+    USE_SERVICE_DISCOVERY = True
+except ImportError:
+    USE_SERVICE_DISCOVERY = False
+    print("⚠️ Service discovery not available, using fallback configuration")
 
 # Determine the correct service hosts based on environment
 environment = os.getenv("ENVIRONMENT", "local").lower()
@@ -19,15 +30,30 @@ elif environment == "production":
         redis_broker_url = f"redis://{first_host}/0"
         redis_backend_url = f"redis://{first_host}/0"
     else:
-        # Fallback to single Redis in production
-        redis_host = os.getenv("REDIS_HOST", "redis")
-        redis_broker_url = f"redis://{redis_host}:6379/0"
-        redis_backend_url = f"redis://{redis_host}:6379/0"
+        # Use service discovery if available
+        redis_host_config = os.getenv("REDIS_HOST", "redis")
+        if USE_SERVICE_DISCOVERY:
+            redis_host = service_discovery.resolve_service_host(redis_host_config, ServiceType.REDIS)
+            print(f"✅ Celery using service discovery: Redis host resolved to {redis_host}")
+        else:
+            redis_host = redis_host_config
+        
+        redis_port = int(os.getenv("REDIS_PORT", "6379"))
+        redis_broker_url = f"redis://{redis_host}:{redis_port}/0"
+        redis_backend_url = f"redis://{redis_host}:{redis_port}/0"
 else:
-    # Development/local: Use Docker service names
-    redis_host = "redis"
-    redis_broker_url = f"redis://{redis_host}:6379/0"
-    redis_backend_url = f"redis://{redis_host}:6379/0"
+    # Development/local: Use service discovery if available
+    redis_host_config = os.getenv("REDIS_HOST", "redis")
+    if USE_SERVICE_DISCOVERY:
+        redis_host = service_discovery.resolve_service_host(redis_host_config, ServiceType.REDIS)
+        print(f"✅ Celery using service discovery: Redis host resolved to {redis_host}")
+    else:
+        # Fallback: use localhost for local development
+        redis_host = "localhost" if environment == "local" else redis_host_config
+    
+    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+    redis_broker_url = f"redis://{redis_host}:{redis_port}/0"
+    redis_backend_url = f"redis://{redis_host}:{redis_port}/0"
 
 # Create Celery app with Redis broker
 celery_app = Celery(
@@ -91,4 +117,7 @@ celery_app.conf.beat_schedule = {
 # Auto-discover tasks from the 'app.tasks' module
 celery_app.autodiscover_tasks(['app.tasks'])
 
-print("✅ Celery config loaded successfully")
+print(f"✅ Celery config loaded successfully")
+print(f"   Redis broker URL: {redis_broker_url}")
+print(f"   Redis backend URL: {redis_backend_url}")
+print(f"   Environment: {environment}")
